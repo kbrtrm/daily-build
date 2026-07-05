@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<title>daily build</title>
+<style>
+  html,body{margin:0;height:100%;background:#0e0e12;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center}
+  canvas{image-rendering:pixelated;image-rendering:crisp-edges;display:block}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
+</head>
+<body>
+<script>
+/* ══════════════════════════════════════════════════════
+   DAILY BUILD · p5.js template
+   ── Seed ──────────────────────────────────────────────
+   Riff on:  Snake (Blockade, 1976 / Nokia 3310)
+   Prompt:   Take it off the grid. The head TURNS like a car and
+             never stops; turn radius = speed ÷ a fixed rate, so
+             hold BRAKE to slow AND carve much tighter — thread a
+             gap, hug a wall, then surge back to cruise. Length
+             just grows the tail you weave through. Juice: eased
+             steering + speed, brake dust, a chomp on pickup,
+             pitch rising with length, a hard crunch on a clip.
+   ══════════════════════════════════════════════════════ */
+
+/* ---------- CONFIG ---------- */
+const GAME_W = 320;      // logical pixels wide
+const GAME_H = 180;      // logical pixels tall
+const BG     = '#0e0e12';
+
+/* g = your pixel canvas. Draw EVERYTHING to it: g.rect(), g.fill(), g.text()… */
+let g, S = 1, OX = 0, OY = 0;   // scale + offsets, managed for you
+
+
+/* ══════════════════════════════════════════════════════
+   YOUR GAME   ── the only section you edit ──
+   Delete the demo, keep reset() / update(dt) / render().
+   ══════════════════════════════════════════════════════ */
+
+/* ---- tunables ---- */
+const M       = 9;       // wall margin (the box you live in)
+const CRUISE  = 68;      // forward speed at cruise (px/s)
+const BRAKE   = 26;      // forward speed while braking — slower = tighter carve
+const ACCEL   = 8;       // how fast speed eases between cruise & brake
+const TURN    = 3.9;     // CONSTANT angular turn rate (rad/s); radius = speed / TURN
+const GAP     = 3.4;     // arc-length between body segments
+const HEAD_R  = 3.2;     // head radius
+const START   = 7;       // starting segment count
+const GROW    = 4;       // segments added per orb
+// radius at cruise ≈ 17px (35px U-turn); braking ≈ 7px (13px) — you carve tight on demand.
+
+// SLOW is a spendable resource: braking draws it down, and *turning* while
+// braking spends it fastest. Run dry and you can't slow — you're stuck wide.
+const DRAIN_TURN = 0.62;  // slow spent per second at full steer while braking
+const DRAIN_BASE = 0.12;  // slow spent per second just for holding the brake
+const ORB_R      = 7;     // orb catch radius (aim for dead-center)
+const REFILL_MIN = 0.30;  // slow refilled by an edge grab
+const REFILL_MAX = 0.85;  // slow refilled by a dead-center grab
+
+let snake, pellet, trail, parts, state, deadT, best = 0;
+
+function reset(){
+  snake = { x: GAME_W/2, y: GAME_H*0.62, ang: -Math.PI/2, // heading up
+            steer: 0, spd: CRUISE, seg: START, sq: 1, sl: 1 };  // sl = slow resource
+  trail = [];
+  parts = [];
+  state = 'play';
+  deadT = 0;
+  spawnPellet();
+}
+
+
+function spawnPellet(){
+  for (let i = 0; i < 40; i++){
+    const x = random(M + 8, GAME_W - M - 8);
+    const y = random(M + 8, GAME_H - M - 8);
+    if (Math.hypot(x - snake.x, y - snake.y) > 34){ pellet = { x, y, t: 0, grabbing: false, minD: 999 }; return; }
+  }
+  pellet = { x: GAME_W/2, y: GAME_H/2, t: 0, grabbing: false, minD: 999 };
+}
+
+/* walk the recorded path and drop a point every GAP pixels back from the head */
+function bodyPoints(){
+  const pts = [];
+  let need = GAP, acc = 0;
+  for (let i = 1; i < trail.length && pts.length < snake.seg; i++){
+    const a = trail[i-1], b = trail[i];
+    acc += Math.hypot(b.x - a.x, b.y - a.y);
+    while (acc >= need && pts.length < snake.seg){
+      pts.push({ x: b.x, y: b.y });
+      need += GAP;
+    }
+  }
+  return pts;
+}
+
+function update(dt){
+  pellet && (pellet.t += dt);
+  updateParts(dt);
+
+  if (state === 'dead'){
+    deadT += dt;
+    if (pressed('space') && deadT > 0.35) reset();
+    return;
+  }
+
+  // steer: ease toward held direction, then curve the heading
+  const target = (down('right') ? 1 : 0) - (down('left') ? 1 : 0);
+  snake.steer += (target - snake.steer) * Math.min(1, 24 * dt);
+  snake.ang   += snake.steer * TURN * dt;
+
+  // brake: slow down to carve tight — but only while you still have SLOW.
+  const wantBrake = down('down') || down('space');
+  const braking   = wantBrake && snake.sl > 0;
+  const tgtSpd    = braking ? BRAKE : CRUISE;
+  snake.spd += (tgtSpd - snake.spd) * Math.min(1, ACCEL * dt);
+
+  // spending: turning while braking drains fastest; holding it drains a little
+  if (braking){
+    snake.sl = Math.max(0, snake.sl - (DRAIN_BASE + DRAIN_TURN * Math.abs(snake.steer)) * dt);
+    if (snake.spd < CRUISE * 0.7 && random() < 0.4){
+      parts.push({ x: snake.x, y: snake.y, vx: random(-16,16), vy: random(-16,16),
+                   life: random(0.2,0.4), max: 0.4, col: [90,150,190] });
+    }
+  }
+
+  snake.x += Math.cos(snake.ang) * snake.spd * dt;
+  snake.y += Math.sin(snake.ang) * snake.spd * dt;
+
+  trail.unshift({ x: snake.x, y: snake.y });
+  if (trail.length > 1600) trail.pop();
+
+  // orb — track closest approach while overlapping; grab resolves on exit,
+  // and a dead-center pass refills much more slow than an edge clip.
+  const d = Math.hypot(snake.x - pellet.x, snake.y - pellet.y);
+  if (d < ORB_R){ pellet.grabbing = true; pellet.minD = Math.min(pellet.minD, d); }
+  else if (pellet.grabbing){
+    const acc  = Math.max(0, 1 - pellet.minD / ORB_R);         // 1 = dead center
+    const fill = REFILL_MIN + (REFILL_MAX - REFILL_MIN) * acc;
+    snake.seg += GROW;
+    snake.sl   = Math.min(1, snake.sl + fill);
+    best = Math.max(best, snake.seg - START);
+    burst(pellet.x, pellet.y, 8 + Math.round(acc * 12), acc > 0.6 ? [120,210,255] : [255, 92, 122]);
+    snake.sq = 0.5; tween(snake, { sq: 1 }, 0.32, ease.outBack);
+    shake(1.5 + acc * 2, 0.12);
+    beep(300 + acc * 340, 0.06, 'square', 0.14);
+    sweep(220, 320 + acc * 300, 0.10, 'sine', 0.05);
+    spawnPellet();
+  }
+
+  // walls
+  if (snake.x < M || snake.x > GAME_W - M || snake.y < M || snake.y > GAME_H - M){
+    return die();
+  }
+  // own body (skip the first few near the head)
+  const body = bodyPoints();
+  for (let i = 5; i < body.length; i++){
+    if (Math.hypot(snake.x - body[i].x, snake.y - body[i].y) < HEAD_R + 1){
+      return die();
+    }
+  }
+}
+
+function die(){
+  if (state === 'dead') return;
+  state = 'dead'; deadT = 0;
+  shake(6, 0.45);
+  sweep(500, 40, 0.5, 'sawtooth', 0.16);
+  beep(90, 0.18, 'square', 0.14);
+  const body = bodyPoints();
+  for (const s of body) if (random() < 0.6) burst(s.x, s.y, 2, [124, 240, 130]);
+  burst(snake.x, snake.y, 20, [255, 120, 120]);
+}
+
+/* ---- particles ---- */
+function burst(x, y, n, col){
+  for (let i = 0; i < n; i++){
+    const a = random(Math.PI * 2), sp = random(20, 90);
+    parts.push({ x, y, vx: Math.cos(a)*sp, vy: Math.sin(a)*sp,
+                 life: random(0.3, 0.6), max: 0.6, col });
+  }
+}
+function updateParts(dt){
+  for (const p of parts){
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    p.vx *= 0.90; p.vy *= 0.90;
+    p.life -= dt;
+  }
+  parts = parts.filter(p => p.life > 0);
+}
+
+function render(){
+  g.background(BG);
+  g.noStroke();
+
+  // walls
+  g.stroke('#23232d'); g.strokeWeight(1); g.noFill();
+  g.rect(M - 3, M - 3, GAME_W - 2*(M-3), GAME_H - 2*(M-3), 3);
+  g.noStroke();
+
+  // orb — a bullseye: thread the center for a bigger slow refill
+  const pls = 1 + Math.sin(pellet.t * 6) * 0.12;
+  g.noFill(); g.stroke(120, 210, 255, 70); g.strokeWeight(1);
+  g.ellipse(pellet.x, pellet.y, ORB_R * 2 * pls, ORB_R * 2 * pls);   // outer catch radius
+  g.noStroke();
+  g.fill(255, 92, 122, 70); g.ellipse(pellet.x, pellet.y, 8, 8);
+  g.fill('#ff5c7a');        g.ellipse(pellet.x, pellet.y, 5, 5);
+  g.fill('#fff6f8');        g.ellipse(pellet.x, pellet.y, 1.8, 1.8); // the center to nail
+
+  // body — tail first so the head sits on top, tapered + brightening forward
+  const body = bodyPoints();
+  for (let i = body.length - 1; i >= 0; i--){
+    const t = 1 - i / Math.max(1, body.length);      // 0 tail → 1 head
+    const r = (HEAD_R - 0.4) * (0.55 + 0.45 * t);
+    g.fill(60 + 70*t, 200 + 40*t, 90 + 30*t);
+    g.ellipse(body[i].x, body[i].y, r*2, r*2);
+  }
+
+  // head — squashes on eat, faces its heading, with a pair of eyes
+  if (state !== 'dead' || Math.floor(deadT * 12) % 2 === 0){
+    g.push();
+    g.translate(snake.x, snake.y);
+    g.rotate(snake.ang);
+    g.fill('#dfffcf');
+    const w = HEAD_R * 2 * (2 - snake.sq), h = HEAD_R * 2 * snake.sq;
+    g.ellipse(0, 0, w, h);
+    g.fill('#12140f');
+    g.ellipse(HEAD_R*0.5,  HEAD_R*0.55, 1.4, 1.4);
+    g.ellipse(HEAD_R*0.5, -HEAD_R*0.55, 1.4, 1.4);
+    g.pop();
+  }
+
+  // particles
+  for (const p of parts){
+    const a = Math.max(0, p.life / p.max) * 255;
+    g.fill(p.col[0], p.col[1], p.col[2], a);
+    g.rect(p.x - 1, p.y - 1, 2, 2);
+  }
+
+  // HUD
+  g.fill('#5a5a68');
+  g.textSize(8); g.textAlign(LEFT, TOP);
+  g.text('len ' + (snake.seg - START), M, M - 1);
+  g.textAlign(RIGHT, TOP);
+  g.text('best ' + best, GAME_W - M, M - 1);
+
+  // slow meter — empties as you carve, refilled by orbs
+  const mw = 54, mx = M, my = M + 9;
+  g.fill('#20202a'); g.rect(mx, my, mw, 3, 1);
+  const empty = snake.sl <= 0.001;
+  g.fill(empty ? (Math.floor(deadT*0 + pellet.t*8) % 2 ? '#ff5c5c' : '#7a2b34') : '#5ad1ff');
+  g.rect(mx, my, mw * snake.sl, 3, 1);
+  g.fill(empty ? '#ff8a8a' : '#3f5a66'); g.textSize(8); g.textAlign(LEFT, TOP);
+  g.text(empty ? 'no slow!' : 'slow', mx + mw + 4, my - 3);
+
+  if (state === 'dead'){
+    g.fill('#e9e9ef'); g.textAlign(CENTER, CENTER);
+    g.textSize(12); g.text('crunch.', GAME_W/2, GAME_H/2 - 8);
+    g.fill('#7c7c8a'); g.textSize(8);
+    g.text('space to try again', GAME_W/2, GAME_H/2 + 6);
+  } else {
+    g.fill('#3f3f4a'); g.textSize(8); g.textAlign(CENTER, BOTTOM);
+    g.text('←/→ steer · hold ↓ to spend SLOW & carve · center an orb to refill', GAME_W/2, GAME_H - M + 2);
+  }
+}
+
+
+/* ══════════════════════════════════════════════════════
+   ENGINE   ── helpers + loop, leave this alone ──
+   ══════════════════════════════════════════════════════ */
+
+/* ---- input ---- */
+const _held = new Set(), _pressed = new Set();
+let _clicked = false;
+
+function down(name){
+  name = name.toLowerCase();
+  if (name==='left')  return _held.has('arrowleft')  || _held.has('a');
+  if (name==='right') return _held.has('arrowright') || _held.has('d');
+  if (name==='up')    return _held.has('arrowup')    || _held.has('w');
+  if (name==='down')  return _held.has('arrowdown')  || _held.has('s');
+  if (name==='space') return _held.has(' ');
+  if (name==='enter') return _held.has('enter');
+  if (name==='esc')   return _held.has('escape');
+  return _held.has(name);                 // single letters, etc.
+}
+function pressed(name){
+  name = name.toLowerCase();
+  const map = { space:' ', enter:'enter', esc:'escape',
+                left:'arrowleft', right:'arrowright', up:'arrowup', down:'arrowdown' };
+  return _pressed.has(map[name] || name);
+}
+function mx(){ return (mouseX - OX) / S; }   // mouse in logical pixels
+function my(){ return (mouseY - OY) / S; }
+function clicked(){ return _clicked; }        // true only on the frame of a press
+
+/* ---- easing + tween ---- */
+const ease = {
+  linear:    t => t,
+  inQuad:    t => t*t,
+  outQuad:   t => 1-(1-t)*(1-t),
+  inOutQuad: t => t<.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2,
+  outCubic:  t => 1-Math.pow(1-t,3),
+  outBack:   t => { const c1=1.70158, c3=c1+1; return 1+c3*Math.pow(t-1,3)+c1*Math.pow(t-1,2); },
+  outElastic:t => { const c4=(2*Math.PI)/3; return t===0?0:t===1?1:Math.pow(2,-10*t)*Math.sin((t*10-0.75)*c4)+1; }
+};
+let _tweens = [];
+/* tween(obj, {prop: target,…}, seconds, ease.fn) — returns handle; set .onComplete */
+function tween(obj, target, dur, easing){
+  easing = easing || ease.linear;
+  const from = {}; for (const k in target) from[k] = obj[k];
+  const tw = { obj, target, from, dur, easing, t:0, done:false, onComplete:null };
+  _tweens.push(tw);
+  return tw;
+}
+function _updateTweens(dt){
+  for (const tw of _tweens){
+    tw.t += dt;
+    const u = tw.dur > 0 ? Math.min(tw.t/tw.dur, 1) : 1;
+    const e = tw.easing(u);
+    for (const k in tw.target) tw.obj[k] = tw.from[k] + (tw.target[k]-tw.from[k])*e;
+    if (u >= 1 && !tw.done){ tw.done = true; if (tw.onComplete) tw.onComplete(); }
+  }
+  _tweens = _tweens.filter(t => !t.done);
+}
+
+/* ---- screenshake ---- */
+let _shakeAmt=0, _shakeT=0, _shakeDur=0;
+function shake(px, secs){ _shakeAmt=px; _shakeDur=secs; _shakeT=secs; }   // px in logical pixels
+
+/* ---- sound (tiny Web Audio, no libraries) ---- */
+let _ac = null;
+function _audio(){
+  if (!_ac) _ac = new (window.AudioContext || window.webkitAudioContext)();
+  if (_ac.state === 'suspended') _ac.resume();
+  return _ac;
+}
+function beep(freq=440, dur=0.08, type='square', gain=0.15){
+  const ac=_audio(), o=ac.createOscillator(), gn=ac.createGain();
+  o.type=type; o.frequency.value=freq; o.connect(gn); gn.connect(ac.destination);
+  const t=ac.currentTime;
+  gn.gain.setValueAtTime(0.0001, t);
+  gn.gain.linearRampToValueAtTime(gain, t+0.005);
+  gn.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+  o.start(t); o.stop(t+dur+0.02);
+}
+function sweep(f1, f2, dur=0.15, type='square', gain=0.15){
+  const ac=_audio(), o=ac.createOscillator(), gn=ac.createGain();
+  o.type=type; o.connect(gn); gn.connect(ac.destination);
+  const t=ac.currentTime;
+  o.frequency.setValueAtTime(f1, t);
+  o.frequency.exponentialRampToValueAtTime(Math.max(1,f2), t+dur);
+  gn.gain.setValueAtTime(gain, t);
+  gn.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+  o.start(t); o.stop(t+dur+0.02);
+}
+
+/* ---- loop ---- */
+function setup(){
+  createCanvas(windowWidth, windowHeight);
+  pixelDensity(1); noSmooth();
+  g = createGraphics(GAME_W, GAME_H); g.noSmooth();
+  _fit();
+  // native input (more reliable than p5 key handling)
+  window.addEventListener('keydown', e => {
+    const k = e.key.toLowerCase();
+    if (!_held.has(k)) _pressed.add(k);
+    _held.add(k);
+    if (['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault();
+  });
+  window.addEventListener('keyup', e => _held.delete(e.key.toLowerCase()));
+  window.addEventListener('pointerdown', () => { _clicked = true; });
+  ['pointerdown','keydown','touchstart'].forEach(ev => window.addEventListener(ev, _audio));
+  reset();
+}
+function _fit(){
+  S  = Math.max(1, Math.floor(Math.min(width/GAME_W, height/GAME_H)));
+  OX = Math.floor((width  - GAME_W*S) / 2);
+  OY = Math.floor((height - GAME_H*S) / 2);
+}
+function windowResized(){ resizeCanvas(windowWidth, windowHeight); _fit(); }
+
+function draw(){
+  const dt = Math.min(deltaTime/1000, 1/30);   // clamp so tab-away doesn't teleport
+  _updateTweens(dt);
+  update(dt);
+  render();
+
+  _shakeT = Math.max(0, _shakeT - dt);
+  const amp = _shakeDur > 0 ? _shakeAmt*(_shakeT/_shakeDur) : 0;
+  const sx = amp ? Math.round(random(-amp, amp)) : 0;
+  const sy = amp ? Math.round(random(-amp, amp)) : 0;
+
+  background(BG);
+  image(g, OX + sx*S, OY + sy*S, GAME_W*S, GAME_H*S);
+
+  _pressed.clear();
+  _clicked = false;
+}
+</script>
+</body>
+</html>
