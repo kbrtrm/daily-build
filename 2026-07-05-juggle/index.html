@@ -8,10 +8,15 @@
   html,body{margin:0;height:100%;background:#0e0e12;overflow:hidden}
   body{display:flex;align-items:center;justify-content:center}
   canvas{image-rendering:pixelated;image-rendering:crisp-edges;display:block}
+  #back{position:fixed;top:8px;left:10px;z-index:10;text-decoration:none;color:#8a8a98;
+    font:600 13px/1 -apple-system,system-ui,sans-serif;opacity:.5;
+    transition:opacity .15s,color .15s;-webkit-user-select:none;user-select:none}
+  #back:hover{opacity:1;color:#fff}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
 </head>
 <body>
+<a id="back" href="../" title="back to the shelf">‹ shelf</a>
 <script>
 /* ══════════════════════════════════════════════════════
    DAILY BUILD · p5.js template
