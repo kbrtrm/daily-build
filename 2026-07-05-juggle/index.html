@@ -16,18 +16,16 @@
 /* ══════════════════════════════════════════════════════
    DAILY BUILD · p5.js template
    ── Seed ──────────────────────────────────────────────
-   Riff on:  Juggling — as an auto-battler / idle roguelike
-   Prompt:   You're a clown at a kid's party, but you don't tap
-             every catch — your clown juggles AUTOMATICALLY. Each
-             toss succeeds on a PROBABILITY set by your stats
-             (skill, flair) and ball properties. You watch and
-             listen — every successful toss plays a note in a
-             scale, so a good routine sounds good — and you
-             INTERVENE by spending focus to assist a shaky catch
-             (the timing ring goes red when the odds are bad).
-             Clear an act, draft a stat/ball, stack a build. The
-             crowd's DELIGHT bleeds slowly; keep the show good or
-             the kids wander off.
+   Riff on:  Juggling — a rhythm catch game + roguelike
+   Prompt:   You're a clown juggling at a kid's party. The clown
+             throws the arcs; YOU make each catch — tap the hand a
+             ball lands in, on the beat (watch the rings). Clean
+             catches walk a C-major melody and lift the crowd's
+             DELIGHT; misses drop it. Clear an act, read the recap,
+             draft a stat/ball (wider window, more flair, +1 ball,
+             safety net…), stack a build. Kids lob extra props to
+             fold into your routine. Delight hits zero → the kids
+             wander off.
    ══════════════════════════════════════════════════════ */
 
 /* ---------- CONFIG ---------- */
@@ -43,30 +41,32 @@ let g, S = 1, OX = 0, OY = 0;
    ══════════════════════════════════════════════════════ */
 
 /* ---- tunables ---- */
-const HANDY   = 148;
+const HANDY   = 146;
 const LX      = 92;
 const RX      = 228;
 const ARC     = 104;
 const BALLR   = 4;
 const LEAD    = 1.4;
-const BEAT0   = 0.62;     // seconds per catch (the routine's tempo)
-const BEATMIN = 0.40;
-const APPROACH= 0.55;     // how long a timing ring shows before a catch
+const BEAT0   = 0.64;
+const BEATMIN = 0.42;
+const APPROACH= 0.6;
+const BASEWIN = 0.13;                 // base catch window (± seconds)
 const ACT_BASE= 12;
 const ACT_STEP= 7;
 const COLS    = ['#ff5c7a', '#5ad1ff', '#ffd24b', '#8affc0', '#c9a0ff', '#ffa24b'];
 
-// music — major pentatonic, each ball is a scale degree
-const SCALE   = [0, 2, 4, 7, 9];
-const ROOT    = 261.63;   // C4
-const SKILL0  = 0.82;     // base catch success
-const FOCUS0  = 2;        // base assist charges
+// music — C major, a walking melody over a I–vi–IV–V bass
+const SCALE   = [0, 2, 4, 5, 7, 9, 11];
+const ROOT    = 261.63;               // C4
+const MELODY  = [0,2,4,2, 4,5,7,5, 7,5,4,2, 4,2,1,0,
+                 4,5,7,9, 7,5,4,5, 4,2,4,5, 2,1,0,2];  // scale-degree indices
+const BASS    = [0, 5, 3, 4];         // C  A  F  G  (one per 8-step bar)
 
 let balls, props, hands, kids;
 let T, beat, delight, combo, score, best = 0;
-let act, actGoal, actProg;
-let skill, flair, focus, focusMax, focusRegen, musicRoot;
-let state, deadT, freeze, nextBeatT, beatPulse, parts, redFlash, flashT;
+let act, actGoal, actProg, actCatches, actDrops, recap;
+let winBonus, flair, net, netMax, melodyPos, barBeat;
+let state, deadT, freeze, nextBeatT, beatPulse, parts, pops, flashT;
 let lastSpawnHand, lobLeft, lobInterval, nextLobT;
 let draft, sel;
 
@@ -74,70 +74,103 @@ const opp = h => (h === 'L' ? 'R' : 'L');
 const handX = h => (h === 'L' ? LX : RX);
 const pick = a => a[Math.floor(random(a.length))];
 
-/* ---- upgrade pool: stats, not timing ---- */
+/* ---- upgrade pool (buff your active play) ---- */
 const UPGRADES = [
-  { id:'skill', name:'STEADY HANDS', desc:'catch more often', can:()=>skill < 0.97,  apply:()=>{ skill = Math.min(0.97, skill + 0.06); } },
-  { id:'show',  name:'SHOWMANSHIP',  desc:'more delight/catch', can:()=>flair < 2.4,  apply:()=>{ flair += 0.3; } },
+  { id:'skill', name:'STEADY HANDS', desc:'wider catch window', can:()=>winBonus < 0.14, apply:()=>{ winBonus = Math.min(0.14, winBonus + 0.035); } },
+  { id:'show',  name:'SHOWMANSHIP',  desc:'more delight/catch', can:()=>flair < 2.4, apply:()=>{ flair += 0.3; } },
   { id:'star',  name:'STAR BALL',    desc:'one ball: 2x, bright', can:()=>balls.some(b=>!b.star),  apply:()=>{ pick(balls.filter(b=>!b.star)).star = true; } },
-  { id:'heavy', name:'BEACH BALL',   desc:'one ball: safe, low',  can:()=>balls.some(b=>!b.heavy), apply:()=>{ pick(balls.filter(b=>!b.heavy)).heavy = true; } },
+  { id:'heavy', name:'BEACH BALL',   desc:'one ball: easy, low',  can:()=>balls.some(b=>!b.heavy), apply:()=>{ pick(balls.filter(b=>!b.heavy)).heavy = true; } },
   { id:'extra', name:'+1 BALL',      desc:'another ball & note',  can:()=>balls.length < 6, apply:()=>addBall() },
-  { id:'focus', name:'DEEP FOCUS',   desc:'more assists',         can:()=>focusMax < 5, apply:()=>{ focusMax++; focusRegen += 0.15; focus = focusMax; } },
+  { id:'net',   name:'SAFETY NET',   desc:'+1 auto-save/act',     can:()=>netMax < 3, apply:()=>{ netMax++; net = netMax; } },
 ];
+function cardPreview(u){
+  if (u.id === 'skill') return 'wider window';
+  if (u.id === 'show')  return 'flair ' + flair.toFixed(1) + ' → ' + (flair+0.3).toFixed(1);
+  if (u.id === 'extra') return balls.length + ' → ' + (balls.length+1) + ' balls';
+  if (u.id === 'net')   return 'saves ' + netMax + ' → ' + (netMax+1);
+  if (u.id === 'star')  return 'doubles its delight';
+  if (u.id === 'heavy') return 'easy + a low note';
+  return '';
+}
 
 function makeBall(col, hand, arriveT, deg){
   return { col, deg, kind:'ball', state:'flight', arriveHand:hand, arriveT,
     launchT: arriveT - 3 * BEAT0, fromX: handX(opp(hand)), toX: handX(hand),
-    assisted:false, sq:1, star:false, heavy:false, trail:[], flashT:0, redT:0 };
+    armed:false, err:0, sq:1, star:false, heavy:false, trail:[], flashT:0, redT:0 };
 }
 function makeKids(){
   return [
-    { x:16,  y:150, wind:0, c:'#ffd24b' },
-    { x:46,  y:158, wind:0, c:'#8affc0' },
-    { x:274, y:158, wind:0, c:'#5ad1ff' },
-    { x:304, y:150, wind:0, c:'#c9a0ff' },
+    { x:16,  y:150, wind:0, c:'#ffd24b' }, { x:46,  y:158, wind:0, c:'#8affc0' },
+    { x:274, y:158, wind:0, c:'#5ad1ff' }, { x:304, y:150, wind:0, c:'#c9a0ff' },
   ];
 }
 
 function reset(){
-  hands = { L:{ x:LX, side: 1, sq:1, lift:0 }, R:{ x:RX, side:-1, sq:1, lift:0 } };
+  hands = { L:{ x:LX, side: 1, sq:1, lift:0, phase:0 }, R:{ x:RX, side:-1, sq:1, lift:0, phase:Math.PI } };
   kids  = makeKids();
-  balls = []; props = []; parts = [];
+  balls = []; props = []; parts = []; pops = [];
   const firstHand = ['R', 'L', 'R'];
   for (let i = 0; i < 3; i++) balls.push(makeBall(COLS[i], firstHand[i], LEAD + i * BEAT0, i));
   T = 0; beat = BEAT0; delight = 0.72; combo = 0; score = 0;
-  skill = SKILL0; flair = 1; focusMax = FOCUS0; focusRegen = 0.5; focus = FOCUS0; musicRoot = ROOT;
+  winBonus = 0; flair = 1; netMax = 0; net = 0; melodyPos = 0; barBeat = 0;
   lastSpawnHand = 'L'; lobLeft = true;
-  state = 'play'; deadT = 0; freeze = 0; nextBeatT = LEAD; beatPulse = 0; redFlash = 0; flashT = 0;
-  draft = null; sel = 0;
+  state = 'play'; deadT = 0; freeze = 0; nextBeatT = LEAD; beatPulse = 0; flashT = 0;
+  recap = null; draft = null; sel = 0;
   startAct(1);
 }
 
 function startAct(n){
   act = n;
   actGoal = ACT_BASE + (n - 1) * ACT_STEP;
-  actProg = 0;
-  focus = focusMax;
+  actProg = 0; actCatches = 0; actDrops = 0;
+  net = netMax;
   beat = Math.max(BEATMIN, BEAT0 - (n - 1) * 0.03);
-  musicRoot = ROOT * Math.pow(2, (((n - 1) % 6) * 2) / 12);   // transpose up a step per act
   if (n >= 2){ lobInterval = Math.max(3.2, 7 - Math.min(n, 4)) * beat; nextLobT = T + 3 * beat; }
   else       { lobInterval = Infinity; nextLobT = Infinity; }
   state = 'play';
 }
 
-/* the odds a given catch lands — this is the whole game, set by your build */
-function successProb(b){
-  let p = skill + (b.heavy ? 0.12 : 0) - (act - 1) * 0.035 - (balls.length - 3) * 0.02;
-  return Math.max(0.05, Math.min(0.985, p));
-}
+function windowSize(b){ return (BASEWIN + winBonus) * (b && b.heavy ? 1.6 : 1); }
 
 /* ---- music ---- */
-function noteFreq(deg, oct){
-  const s = SCALE[((deg % SCALE.length) + SCALE.length) % SCALE.length] + 12 * oct;
-  return musicRoot * Math.pow(2, s / 12);
+let _mx = null;
+function _music(){
+  const ac = _audio();
+  if (!_mx){
+    const master = ac.createGain(); master.gain.value = 0.8;
+    const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2100; lp.Q.value = 0.3;
+    const dly = ac.createDelay(); dly.delayTime.value = 0.30;
+    const fb  = ac.createGain(); fb.gain.value = 0.16;
+    const wet = ac.createGain(); wet.gain.value = 0.13;
+    master.connect(lp); lp.connect(ac.destination);
+    lp.connect(dly); dly.connect(fb); fb.connect(dly); dly.connect(wet); wet.connect(ac.destination);
+    _mx = { ac, master };
+  }
+  return _mx;
 }
-function playNote(deg, oct, type, gain){ beep(noteFreq(deg, oct), 0.13, type || 'sine', gain || 0.11); }
+function tone(freq, dur, gain, type){
+  const { ac, master } = _music();
+  const t = ac.currentTime, d = dur || 0.3;
+  const o = ac.createOscillator(); o.type = type || 'sine'; o.frequency.value = freq;
+  const gn = ac.createGain();
+  gn.gain.setValueAtTime(0.0001, t);
+  gn.gain.linearRampToValueAtTime(gain || 0.08, t + 0.012);
+  gn.gain.exponentialRampToValueAtTime(0.0001, t + d);
+  o.connect(gn); gn.connect(master);
+  o.start(t); o.stop(t + d + 0.03);
+}
+function scaleFreq(idx, octOff){
+  const len = SCALE.length;
+  const oct = Math.floor(idx / len) + (octOff || 0);
+  const s = SCALE[((idx % len) + len) % len] + 12 * oct;
+  return ROOT * Math.pow(2, s / 12);
+}
+function melodyNote(b){
+  const idx = MELODY[melodyPos % MELODY.length]; melodyPos++;
+  tone(scaleFreq(idx, b.heavy ? -1 : 0), 0.30, 0.085, 'triangle');
+  if (b.star) tone(scaleFreq(idx + 2, 0), 0.28, 0.04, 'sine');   // a third above, in key
+}
 
-/* parabolic arc — fast through the hands, hangs at the apex */
 function ballPos(b){
   if (b.state === 'falling'){
     const u = T - b.dropT;
@@ -152,18 +185,16 @@ function ballPos(b){
 
 function tossOnward(b){
   const from = b.arriveHand;
-  b.launchT = b.arriveT;
-  b.arriveHand = opp(from);
+  b.launchT = b.arriveT; b.arriveHand = opp(from);
   b.fromX = handX(from); b.toX = handX(b.arriveHand);
   b.arriveT = b.launchT + balls.length * beat;
-  b.state = 'flight'; b.assisted = false;
+  b.state = 'flight'; b.armed = false;
 }
 
 function addBall(){
   let latest = balls[0];
   for (const b of balls) if (b.arriveT > latest.arriveT) latest = b;
-  const hand = opp(latest.arriveHand);
-  const n = balls.length + 1;
+  const hand = opp(latest.arriveHand), n = balls.length + 1;
   const b = makeBall(COLS[balls.length % COLS.length], hand, latest.arriveT + beat, balls.length);
   b.launchT = b.arriveT - n * beat;
   b.fromX = handX(opp(hand)); b.toX = handX(hand);
@@ -176,125 +207,136 @@ function spawnLob(){
   const hand = kid.x < 160 ? 'R' : 'L';
   props.push({ kind:'prop', deg:4, state:'flight', arriveHand:hand, arriveT: T + 3 * beat,
     launchT: T, fromX: kid.x, toX: handX(hand), fromY: kid.y, toY: HANDY, arcH: 92,
-    assisted:false, sq:1, trail:[], flashT:0, redT:0 });
+    armed:false, err:0, sq:1, trail:[], flashT:0, redT:0 });
   kid.wind = 1; tween(kid, { wind: 0 }, 0.5, ease.outCubic);
-  beep(300, 0.05, 'sine', 0.08);
+  beep(300, 0.05, 'sine', 0.06);
   nextLobT = T + lobInterval;
 }
 
 function update(dt){
-  updateParts(dt);
+  updateParts(dt); updatePops(dt);
   beatPulse = Math.max(0, beatPulse - dt * 3.5);
-  redFlash  = Math.max(0, redFlash - dt * 2.5);
   flashT    = Math.max(0, flashT - dt);
 
-  if (state === 'over'){
-    T += dt; deadT += dt;
-    if (pressed('space') && deadT > 0.4) reset();
-    return;
-  }
+  if (state === 'over'){ T += dt; deadT += dt; if (pressed('space') && deadT > 0.4) reset(); return; }
   if (state === 'draft'){ draftInput(); return; }
   if (freeze > 0){ freeze -= dt; return; }
 
   T += dt;
-
   while (T >= nextBeatT){ onBeat(); nextBeatT += beat; }
   if (T >= nextLobT) spawnLob();
 
-  focus   = Math.min(focusMax, focus + focusRegen * dt);
   delight = Math.max(0, delight - 0.015 * dt);
   if (delight <= 0){ collapse(); return; }
 
-  if (pressed('left'))  assist('L');
-  if (pressed('right')) assist('R');
+  if (pressed('left'))  judge('L');
+  if (pressed('right')) judge('R');
 
-  for (const b of balls){ if (b.state === 'flight' && T >= b.arriveT) resolveBall(b); }
-  for (const p of props){ if (p.state === 'flight' && T >= p.arriveT) resolveProp(p); }
+  for (const b of balls){
+    if (b.state === 'flight' && T >= b.arriveT){ if (b.armed) doCatch(b); else b.state = 'held'; }
+    if (b.state === 'held' && !b.armed && T > b.arriveT + windowSize(b)) miss(b);
+  }
+  for (const p of props){
+    if (p.state === 'flight' && T >= p.arriveT){ if (p.armed) catchProp(p); else p.state = 'held'; }
+    if (p.state === 'held' && !p.armed && T > p.arriveT + windowSize(p)) splatProp(p);
+  }
   props = props.filter(p => p.state !== 'gone' && ballPos(p).y < GAME_H + 30);
+  balls = balls.filter(b => !b.gone);
 
   if (state === 'play' && actProg >= actGoal) enterDraft();
 
   for (const b of balls.concat(props)){
     const p = ballPos(b);
-    b.trail.unshift({ x: p.x, y: p.y });
-    if (b.trail.length > 7) b.trail.pop();
-    b.flashT = Math.max(0, b.flashT - dt);
-    b.redT   = Math.max(0, b.redT - dt);
+    b.trail.unshift({ x: p.x, y: p.y }); if (b.trail.length > 7) b.trail.pop();
+    b.flashT = Math.max(0, b.flashT - dt); b.redT = Math.max(0, b.redT - dt);
   }
 }
 
-function onBeat(){ beatPulse = 1; beep(musicRoot * 0.5, 0.05, 'sine', 0.05); }   // bass pulse in key
+function onBeat(){
+  beatPulse = 1;
+  barBeat = (barBeat + 1) % 32;
+  tone(scaleFreq(BASS[Math.floor(barBeat / 8) % 4], -2), 0.24, 0.035, 'sine');   // I–vi–IV–V bass
+}
 
-/* tap a hand to spend focus and GUARANTEE the next shaky catch there */
-function assist(hand){
-  if (focus < 1){ beep(140, 0.03, 'sine', 0.05); return; }
+/* a tap catches the nearest ball/prop landing in that hand, if it's in the window */
+function judge(hand){
   let c = null;
   const consider = b => {
-    if (b.state !== 'flight' || b.assisted) return;
-    if (b.arriveHand !== hand) return;
-    const rem = b.arriveT - T;
-    if (rem >= -0.05 && rem <= APPROACH && (!c || b.arriveT < c.arriveT)) c = b;
+    if (b.state === 'falling' || b.state === 'gone' || b.armed || b.arriveHand !== hand) return;
+    if (Math.abs(T - b.arriveT) <= windowSize(b) && (!c || Math.abs(T - b.arriveT) < Math.abs(T - c.arriveT))) c = b;
   };
   balls.forEach(consider); props.forEach(consider);
-  if (!c){ beep(150, 0.03, 'sine', 0.05); return; }
-  c.assisted = true; focus -= 1;
-  hands[hand].sq = 0.6; tween(hands[hand], { sq: 1 }, 0.2, ease.outBack);
+  if (!c){ beep(150, 0.03, 'sine', 0.05); return; }         // mistimed / empty tap
+  c.armed = true; c.err = Math.abs(T - c.arriveT);
+  if (c.state === 'held'){ c.kind === 'prop' ? catchProp(c) : doCatch(c); }
 }
 
-function resolveBall(b){
-  const assisted = b.assisted;
-  if (assisted || random() < successProb(b)) successToss(b, assisted);
-  else bobble(b);
-}
-
-function successToss(b, assisted){
+function doCatch(b){
+  const perfect = b.err <= 0.35 * windowSize(b);
   combo++; score += 1 + combo; best = Math.max(best, score);
-  let gain = 0.035 * flair * (b.star ? 2 : 1) * (b.heavy ? 1.2 : 1);
-  if (assisted) gain *= 1.4;
+  actCatches++; actProg++;
+  let gain = (perfect ? 0.05 : 0.032) * flair * (b.star ? 2 : 1) * (b.heavy ? 1.15 : 1);
   delight = Math.min(1, delight + gain);
-  actProg++;
 
   const from = b.arriveHand;
   hands[from].sq = 0.45; tween(hands[from], { sq: 1 },   0.30, ease.outBack);
   hands[from].lift = 1;  tween(hands[from], { lift: 0 }, 0.26, ease.outCubic);
   b.sq = 0.5; tween(b, { sq: 1 }, 0.28, ease.outBack);
   b.flashT = 0.14;
-  burst(handX(from), HANDY - 3, assisted ? 12 : (b.star ? 9 : 5), b.star ? [255,215,90] : hexRGB(b.col));
+  burst(handX(from), HANDY - 3, perfect ? 10 : 5, b.star ? [255,215,90] : hexRGB(b.col));
+  melodyNote(b);
+  if (perfect){ freeze = 0.045; shake(1, 0.08); flashT = 0.08; }
+  if (b.star) popText(handX(from), HANDY - 13, '★', [255,215,90], 10);
+  if (combo > 0 && combo % 10 === 0){ popText(GAME_W/2, 46, 'x' + combo + '!', [255,255,255], 12); for (const k of kids){ k.wind = 1; tween(k, { wind: 0 }, 0.4, ease.outCubic); } }
 
-  const oct = Math.min(2, Math.floor(combo / 8)) + (b.heavy ? -1 : 0);
-  playNote(b.deg, oct, b.star ? 'triangle' : 'sine', 0.11);
-  if (assisted){ playNote(b.deg + 2, oct + 1, 'triangle', 0.09); shake(1, 0.08); flashT = 0.12; }
-
-  tossOnward(b);
+  if (b.temp != null && --b.temp <= 0) returnToCrowd(b);
+  else tossOnward(b);
 }
 
-function bobble(b){                              // a missed catch — routine wobbles on, delight dips
-  combo = 0; delight -= 0.11; b.redT = 0.4; redFlash = 1;
-  shake(2.5, 0.2);
-  beep(noteFreq(b.deg, 0) * 0.94, 0.12, 'sawtooth', 0.09);   // flat, sour note
+function miss(b){
+  if (net > 0){ net--; combo = 0; popText(handX(b.arriveHand), HANDY - 13, 'saved', [159,208,255], 9);
+                burst(handX(b.arriveHand), HANDY - 3, 6, [159,208,255]); beep(320, 0.05, 'sine', 0.08);
+                if (b.temp != null){ b.gone = true; } else tossOnward(b); return; }
+  combo = 0; delight -= 0.09; actDrops++; b.redT = 0.4;
+  shake(1.6, 0.14);
+  tone(scaleFreq(0, -1), 0.20, 0.045, 'sine');               // soft low note, in key
   burst(handX(b.arriveHand), HANDY - 3, 5, [200, 110, 90]);
+  popText(handX(b.arriveHand), HANDY - 13, 'miss', [255, 96, 104], 9);
   if (delight <= 0){ collapse(); return; }
+  if (b.temp != null){ b.gone = true; return; }
   tossOnward(b);
 }
 
-function resolveProp(p){
-  const assisted = p.assisted;
-  if (assisted || random() < skill - 0.15){
-    combo++; score += 5; best = Math.max(best, score);
-    delight = Math.min(1, delight + 0.05 * flair);
-    const from = p.arriveHand;
-    hands[from].sq = 0.45; tween(hands[from], { sq: 1 },   0.30, ease.outBack);
-    hands[from].lift = 1;  tween(hands[from], { lift: 0 }, 0.26, ease.outCubic);
-    burst(handX(from), HANDY - 3, 14, [255, 220, 120]);
-    playNote(4, assisted ? 2 : 1, 'triangle', 0.11); shake(1.5, 0.1);
-    p.state = 'gone';
-  } else {
-    combo = 0; delight = Math.max(0, delight - 0.1); redFlash = 1;
-    shake(3, 0.22); beep(120, 0.1, 'square', 0.1);
-    burst(handX(p.arriveHand), HANDY, 10, [200, 120, 90]);
-    p.state = 'gone';
-    if (delight <= 0) collapse();
-  }
+function catchProp(p){
+  combo++; score += 3; best = Math.max(best, score);
+  delight = Math.min(1, delight + 0.04 * flair);
+  const from = p.arriveHand;
+  hands[from].sq = 0.45; tween(hands[from], { sq: 1 }, 0.30, ease.outBack);
+  hands[from].lift = 1;  tween(hands[from], { lift: 0 }, 0.26, ease.outCubic);
+  burst(handX(from), HANDY - 3, 12, [255, 220, 120]);
+  tone(scaleFreq(4, 1), 0.28, 0.08, 'triangle'); shake(1, 0.08);
+  popText(handX(from), HANDY - 13, 'caught!', [255, 220, 120], 9);
+  const nb = makeBall('#ffd24b', from, p.arriveT, balls.length);
+  nb.temp = 5; balls.push(nb); tossOnward(nb);
+  p.state = 'gone';
+}
+
+function splatProp(p){
+  combo = 0; delight = Math.max(0, delight - 0.08);
+  shake(1.8, 0.14); tone(scaleFreq(0, -1), 0.20, 0.045, 'sine');
+  burst(handX(p.arriveHand), HANDY, 8, [200, 120, 90]);
+  popText(handX(p.arriveHand), HANDY - 13, 'splat', [255, 120, 96], 9);
+  p.state = 'gone';
+  if (delight <= 0) collapse();
+}
+
+function returnToCrowd(b){
+  b.gone = true;
+  score += 8; best = Math.max(best, score);
+  delight = Math.min(1, delight + 0.05 * flair);
+  burst(handX(b.arriveHand), HANDY - 3, 14, [255, 220, 120]);
+  popText(handX(b.arriveHand), HANDY - 16, 'nice!', [255, 220, 120], 9);
+  tone(scaleFreq(4, 1), 0.3, 0.08, 'triangle');
 }
 
 function collapse(){
@@ -307,18 +349,24 @@ function collapse(){
   }
 }
 
-/* ---- the draft between acts ---- */
+/* ---- draft with a recap that tells you WHY ---- */
 function offer3(){
-  const avail = UPGRADES.filter(u => u.can());
-  const out = [];
+  const avail = UPGRADES.filter(u => u.can()), out = [];
   while (out.length < 3 && avail.length) out.push(avail.splice(Math.floor(random(avail.length)), 1)[0]);
   return out;
 }
 function enterDraft(){
+  const total = actCatches + actDrops, clean = total ? actCatches / total : 1;
+  let diag;
+  if (clean < 0.72)                      diag = 'Missing catches — STEADY HANDS or a BEACH BALL.';
+  else if (delight < 0.4)                diag = 'The crowd cooled — SHOWMANSHIP helps.';
+  else if (clean > 0.9 && delight > 0.7) diag = 'Smooth show! Push it — +1 BALL or STAR BALL.';
+  else                                   diag = 'Solid — shore up a weakness or add flair.';
+  recap = { catches: actCatches, drops: actDrops, clean: Math.round(clean * 100), diag };
   state = 'draft'; draft = offer3(); sel = 0;
   beep(500, 0.08, 'triangle', 0.1); sweep(500, 760, 0.12, 'sine', 0.06);
 }
-function cardGeom(i){ return { x: 16 + i * 98, y: 44, w: 92, h: 92 }; }
+function cardGeom(i){ return { x: 16 + i * 98, y: 46, w: 92, h: 92 }; }
 function cardAt(x, y){
   for (let i = 0; i < (draft ? draft.length : 0); i++){
     const c = cardGeom(i);
@@ -339,7 +387,7 @@ function draftInput(){
   }
 }
 
-/* ---- particles ---- */
+/* ---- particles + floating text ---- */
 function hexRGB(h){ return [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)]; }
 function burst(x, y, n, col){
   for (let i = 0; i < n; i++){
@@ -347,10 +395,9 @@ function burst(x, y, n, col){
     parts.push({ x, y, vx: Math.cos(a)*sp, vy: Math.sin(a)*sp - 20, life: random(0.25, 0.55), max: 0.55, col });
   }
 }
-function updateParts(dt){
-  for (const p of parts){ p.x += p.vx*dt; p.y += p.vy*dt; p.vy += 160*dt; p.vx *= 0.94; p.life -= dt; }
-  parts = parts.filter(p => p.life > 0);
-}
+function updateParts(dt){ for (const p of parts){ p.x += p.vx*dt; p.y += p.vy*dt; p.vy += 160*dt; p.vx *= 0.94; p.life -= dt; } parts = parts.filter(p => p.life > 0); }
+function popText(x, y, txt, col, size){ pops.push({ x, y, txt, col: col || [255,255,255], size: size || 8, life: 0.75, vy: -16 }); }
+function updatePops(dt){ for (const p of pops){ p.y += p.vy*dt; p.vy *= 0.9; p.life -= dt; } pops = pops.filter(p => p.life > 0); }
 
 /* ══════════════════════════════════════════════════════
    RENDER
@@ -360,44 +407,41 @@ function render(){
   g.noStroke();
 
   g.fill(255, 240, 200, 9); g.ellipse(GAME_W/2, 74, 250, 210);
-  g.fill(18, 18, 26);       g.rect(0, HANDY + 8, GAME_W, GAME_H - HANDY - 8);
+  g.fill(18, 18, 26);       g.rect(0, HANDY + 10, GAME_W, GAME_H - HANDY - 10);
 
-  if (delight < 0.4 || redFlash > 0){
-    const a = Math.max((0.4 - delight) / 0.4 * 90, redFlash * 70);
-    g.fill(255, 40, 60, a); g.rect(0, 0, GAME_W, GAME_H);
-  }
-  if (flashT > 0){ g.fill(255, 255, 255, flashT * 120); g.rect(0, 0, GAME_W, GAME_H); }
+  if (delight < 0.3){ const a = (0.3 - delight) / 0.3 * 55; g.fill(255, 60, 70, a); g.rect(0, 0, GAME_W, GAME_H); }
+  if (flashT > 0){ g.fill(255, 255, 255, flashT * 90); g.rect(0, 0, GAME_W, GAME_H); }
 
   for (const k of kids) drawKid(k);
   drawClown();
 
   const bp = beatPulse * beatPulse;
   g.fill(120, 120, 150, 34 * bp);
-  g.ellipse(GAME_W/2, HANDY + 10, 50 + 70*(1-bp), 12 + 8*(1-bp));
+  g.ellipse(GAME_W/2, HANDY + 12, 50 + 70*(1-bp), 12 + 8*(1-bp));
 
-  drawHand(hands.L); drawHand(hands.R);
+  drawGlove(hands.L); drawGlove(hands.R);
 
-  // timing rings colored by the odds — RED = shaky (assist it!), GREEN = safe, GOLD = assisted
+  // timing rings: white shrink-to-catch; a ball waiting (held) pulses red — tap now
   if (state === 'play' || state === 'draft'){
     for (const b of balls.concat(props)){
-      if (b.state !== 'flight') continue;
-      const rem = b.arriveT - T; if (rem < 0 || rem > APPROACH) continue;
-      const p = ballPos(b), rr = BALLR + 24 * (rem / APPROACH), close = 1 - rem / APPROACH;
-      let cr, cg, cb;
-      if (b.assisted){ cr = 255; cg = 210; cb = 90; }
-      else if (b.kind === 'prop'){ cr = 255; cg = 200; cb = 120; }
-      else { const pr = successProb(b); cr = Math.round(255*(1-pr) + 90*pr); cg = Math.round(90*(1-pr) + 230*pr); cb = 90; }
-      g.noFill(); g.strokeWeight(1); g.stroke(cr, cg, cb, 30 + 160*close);
-      g.ellipse(p.x, p.y, rr*2, rr*2); g.noStroke();
+      if (b.state === 'flight' && !b.armed){
+        const rem = b.arriveT - T; if (rem < 0 || rem > APPROACH) continue;
+        const p = ballPos(b), rr = BALLR + 24 * (rem / APPROACH), close = 1 - rem / APPROACH;
+        g.noFill(); g.strokeWeight(1);
+        if (b.kind === 'prop') g.stroke(255, 200, 120, 30 + 170*close);
+        else                   g.stroke(255, 255, 255, 30 + 170*close);
+        g.ellipse(p.x, p.y, rr*2, rr*2); g.noStroke();
+      } else if (b.state === 'held' && !b.armed){
+        g.noFill(); g.stroke(255, 80, 96, 210); g.strokeWeight(1);
+        g.ellipse(handX(b.arriveHand), HANDY - 3, 13, 13); g.noStroke();
+      }
     }
   }
 
   for (const b of balls.concat(props)) drawBall(b);
 
-  for (const p of parts){
-    const a = Math.max(0, p.life / p.max) * 255;
-    g.fill(p.col[0], p.col[1], p.col[2], a); g.rect(p.x - 1, p.y - 1, 2, 2);
-  }
+  for (const p of parts){ const a = Math.max(0, p.life / p.max) * 255; g.fill(p.col[0], p.col[1], p.col[2], a); g.rect(p.x-1, p.y-1, 2, 2); }
+  for (const p of pops){ const a = Math.min(1, p.life / 0.3) * 255; g.fill(p.col[0], p.col[1], p.col[2], a); g.textAlign(CENTER, CENTER); g.textSize(p.size); g.text(p.txt, p.x, p.y); }
 
   drawHUD();
   if (state === 'draft') drawDraft();
@@ -406,13 +450,8 @@ function render(){
 
 function drawBall(b){
   const rgb = b.kind === 'prop' ? [255, 210, 130] : hexRGB(b.col);
-  for (let i = b.trail.length - 1; i >= 0; i--){
-    const t = 1 - i / b.trail.length;
-    g.fill(rgb[0], rgb[1], rgb[2], 70 * t);
-    g.ellipse(b.trail[i].x, b.trail[i].y, BALLR * 1.5 * t, BALLR * 1.5 * t);
-  }
-  const p = ballPos(b);
-  const r = b.heavy ? BALLR * 1.7 : BALLR;
+  for (let i = b.trail.length - 1; i >= 0; i--){ const t = 1 - i / b.trail.length; g.fill(rgb[0], rgb[1], rgb[2], 70 * t); g.ellipse(b.trail[i].x, b.trail[i].y, BALLR * 1.5 * t, BALLR * 1.5 * t); }
+  const p = ballPos(b), r = b.heavy ? BALLR * 1.7 : BALLR;
   if (b.redT > 0)        g.fill(255, 80, 90);
   else if (b.flashT > 0) g.fill(255, 255, 255);
   else if (b.kind === 'prop') g.fill(255, 210, 130);
@@ -427,23 +466,27 @@ function drawHUD(){
   g.fill('#22222c'); g.rect(8, 5, bw, 3, 1);
   g.fill(delight > 0.4 ? '#ffcf5a' : '#ff5c5c'); g.rect(8, 5, bw * Math.max(0, delight), 3, 1);
   g.textSize(8);
-  g.fill('#8a8a98'); g.textAlign(LEFT, TOP);   g.text('delight', 8, 10);
-  g.fill('#c9c9d6'); g.textAlign(CENTER, TOP); g.text('act ' + act + '   ' + Math.min(actProg, actGoal) + '/' + actGoal, GAME_W/2, 10);
-  g.fill('#8a8a98'); g.textAlign(RIGHT, TOP);  g.text('best ' + best, GAME_W - 8, 10);
-  // focus pips + skill readout
-  for (let i = 0; i < focusMax; i++){ g.fill(i < Math.floor(focus) ? '#9fd0ff' : '#2a3a48'); g.ellipse(11 + i*7, 24, 4, 4); }
-  g.fill('#6f6f7e'); g.textAlign(RIGHT, TOP); g.text('skill ' + Math.round(skill*100) + '%', GAME_W - 8, 20);
+  g.fill('#8a8a98'); g.textAlign(LEFT, TOP); g.text('delight', 8, 10);
+  const total = actCatches + actDrops, clean = total ? Math.round(actCatches / total * 100) : 100;
+  g.fill('#c9c9d6'); g.textAlign(CENTER, TOP); g.text('act ' + act + '   ' + Math.min(actProg, actGoal) + '/' + actGoal + '   ' + clean + '% clean', GAME_W/2, 10);
+  g.fill('#8a8a98'); g.textAlign(RIGHT, TOP); g.text('best ' + best, GAME_W - 8, 10);
+  if (netMax > 0){ for (let i = 0; i < netMax; i++){ g.fill(i < net ? '#9fd0ff' : '#2a3a48'); g.ellipse(11 + i*7, 24, 4, 4); } }
   if (combo > 2){ g.fill('#fff'); g.textAlign(CENTER, TOP); g.textSize(8 + Math.min(combo, 20) * 0.5); g.text('x' + combo, GAME_W/2, 22); }
+  if (act === 1 && actProg < 4 && state === 'play'){ g.fill('#5a5a6a'); g.textSize(8); g.textAlign(CENTER, CENTER); g.text('tap  ←/→  (a/d)  as each ball lands', GAME_W/2, 118); }
 }
 
-function drawHand(h){
-  const y  = HANDY + 4 - h.lift * 5;
-  const pw = 15 * (2 - h.sq) / 1.5, ph = 5 * h.sq;
-  g.push(); g.translate(h.x, y);
-  g.fill('#caa07a'); g.rect(-pw/2, -ph/2, pw, ph + 2, 2);
-  g.fill('#d8b48c'); for (let i = -1; i <= 1; i++) g.rect(i*3 - 1, -ph/2 - 3 + h.lift*1.5, 2, 4, 1);
-  g.rect(h.side * (pw/2 - 1) - 1, -ph/2 - 1, 2, 3, 1);
-  g.pop();
+function drawGlove(h){
+  const t = T * 2.6 + h.phase, bob = Math.sin(t) * 1.3, rot = Math.sin(t) * 0.14 + h.side * 0.10;
+  g.push(); g.translate(h.x, HANDY + 6 - h.lift * 6 + bob); g.rotate(rot);
+  const sq = h.sq;
+  g.stroke('#b9b9c6'); g.strokeWeight(1);
+  g.fill('#eef0f5'); g.rect(-5, 5, 10, 4, 2);
+  g.fill('#ffffff'); g.ellipse(0, 0, 12 * (2 - sq) / 1.35, 11 * sq);
+  for (let i = 0; i < 4; i++){ const a = (i - 1.5) * 0.34; g.push(); g.rotate(a); g.ellipse(0, -8, 3.2, 7.5); g.pop(); }
+  g.push(); g.translate(h.side * 5, 0); g.rotate(h.side * 0.5); g.ellipse(0, -2, 3.2, 6); g.pop();
+  g.noStroke(); g.stroke('#d2d2dc'); g.strokeWeight(1);
+  g.line(-2.5, -1, -2.5, 4); g.line(0, -2, 0, 4); g.line(2.5, -1, 2.5, 4);
+  g.noStroke(); g.pop();
 }
 
 function drawKid(k){
@@ -469,26 +512,34 @@ function drawClown(){
 
 function drawUpgradeIcon(id, x, y){
   g.noStroke();
-  if (id === 'skill'){ g.noFill(); g.stroke('#8affc0'); g.strokeWeight(1); g.ellipse(x,y,12,12); g.ellipse(x,y,6,6); g.noStroke(); g.fill('#8affc0'); g.ellipse(x,y,2,2); }
+  if (id === 'skill'){ g.noFill(); g.stroke('#8affc0'); g.strokeWeight(1); g.ellipse(x,y,13,13); g.ellipse(x,y,6,6); g.noStroke(); g.fill('#8affc0'); g.ellipse(x,y,2,2); }
   else if (id === 'show'){ g.fill('#ffd24b'); for (let i=0;i<3;i++){ const a=i*2.1; g.ellipse(x+Math.cos(a)*5, y+Math.sin(a)*5, 3,3); } g.fill('#fff'); g.ellipse(x,y,3,3); }
   else if (id === 'star'){ g.fill('#ffd24b'); g.ellipse(x,y,9,9); g.fill('#fff'); g.ellipse(x,y,3,3); }
   else if (id === 'heavy'){ g.fill('#8affc0'); g.ellipse(x,y,13,13); g.fill(255,255,255,120); g.ellipse(x-2,y-2,4,4); }
   else if (id === 'extra'){ g.fill('#ff5c7a'); g.ellipse(x-4,y,5,5); g.fill('#5ad1ff'); g.ellipse(x+4,y-2,5,5); g.fill('#ffd24b'); g.ellipse(x,y+3,5,5); }
-  else if (id === 'focus'){ g.fill('#e8e8ee'); g.ellipse(x,y,12,7); g.fill('#5ad1ff'); g.ellipse(x,y,4,4); g.fill('#1a1a20'); g.ellipse(x,y,1.8,1.8); }
+  else if (id === 'net'){ g.stroke('#9fd0ff'); g.strokeWeight(1); g.noFill(); for (let i=-1;i<=1;i++){ g.line(x-6, y+i*3, x+6, y+i*3); g.line(x+i*4, y-4, x+i*4, y+4); } g.noStroke(); }
 }
 
 function drawDraft(){
-  g.fill(10, 10, 14, 180); g.rect(0, 0, GAME_W, GAME_H);
-  g.fill('#ffd24b'); g.textAlign(CENTER, TOP); g.textSize(10); g.text('the crowd wants MORE', GAME_W/2, 12);
+  g.fill(10, 10, 14, 188); g.rect(0, 0, GAME_W, GAME_H);
+  g.textAlign(CENTER, TOP);
+  g.fill('#ffd24b'); g.textSize(10); g.text('the crowd wants MORE', GAME_W/2, 5);
+  if (recap){
+    g.textSize(8);
+    g.fill('#c9c9d6'); g.text(recap.catches + ' caught  ·  ' + recap.drops + ' dropped  ·  ' + recap.clean + '% clean', GAME_W/2, 19);
+    g.fill(recap.clean < 72 ? '#ff9a9a' : '#8affc0'); g.text(recap.diag, GAME_W/2, 30);
+  }
   for (let i = 0; i < draft.length; i++){
     const c = cardGeom(i), u = draft[i], on = i === sel;
     g.fill(on ? '#2a2a38' : '#161620'); g.rect(c.x, c.y, c.w, c.h, 4);
     g.noFill(); g.strokeWeight(1); g.stroke(on ? '#ffd24b' : '#3a3a48'); g.rect(c.x, c.y, c.w, c.h, 4); g.noStroke();
-    drawUpgradeIcon(u.id, c.x + c.w/2, c.y + 24);
-    g.fill('#e9e9ef'); g.textAlign(CENTER, CENTER); g.textSize(8); g.text(u.name, c.x + c.w/2, c.y + 50);
-    g.fill('#9a9aa8'); g.text(u.desc, c.x + c.w/2, c.y + 66);
+    drawUpgradeIcon(u.id, c.x + c.w/2, c.y + 22);
+    g.fill('#e9e9ef'); g.textAlign(CENTER, CENTER); g.textSize(8); g.text(u.name, c.x + c.w/2, c.y + 46);
+    g.fill('#9a9aa8'); g.text(u.desc, c.x + c.w/2, c.y + 60);
+    g.fill(on ? '#ffd24b' : '#6f6f7e'); g.text(cardPreview(u), c.x + c.w/2, c.y + 76);
   }
-  g.fill('#7c7c8a'); g.textAlign(CENTER, BOTTOM); g.textSize(8); g.text('←/→ choose  ·  space to take it', GAME_W/2, GAME_H - 5);
+  g.fill('#6f6f7e'); g.textAlign(CENTER, BOTTOM); g.textSize(8);
+  g.text('you: window ' + Math.round((BASEWIN+winBonus)*1000) + 'ms  ·  flair ' + flair.toFixed(1) + '  ·  ' + balls.length + ' balls     ←/→ · space', GAME_W/2, GAME_H - 4);
 }
 
 function drawOver(){

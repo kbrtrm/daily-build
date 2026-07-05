@@ -31,13 +31,24 @@
   <ul id="list"></ul>
 </div>
 <script>
+// pick an emoji from keywords in the slug (first match wins; 🎮 fallback)
+function emojiFor(s){
+  const map = [
+    [/snake/,'🐍'],[/juggl|clown|party/,'🤹'],[/grapple|hook|swing|rope/,'🪝'],
+    [/dash|runner|run\b/,'🏃'],[/gravity|flip/,'🌀'],[/stack|balance|weight|teeter/,'🧱'],
+    [/land(er)?|rocket|space|thrust/,'🚀'],[/pong|breakout|brick|paddle/,'🧱'],
+    [/aster|drift/,'☄️'],[/music|rhythm|beat|note/,'🎵'],[/maze/,'🌽'],[/star/,'⭐']
+  ];
+  for(const [re,e] of map) if(re.test(s)) return e;
+  return '🎮';
+}
 function pretty(folder){
   const m = folder.match(/^(\d{4})-(\d{2})-(\d{2})-?(.*)$/);
-  if(!m) return { name: folder, date: '' };
+  if(!m) return { name: folder, date: '', emoji: '🎮' };
   const date = new Date(+m[1], +m[2]-1, +m[3])
     .toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
   const slug = m[4] ? m[4].replace(/[-_]+/g,' ') : folder;
-  return { name: slug, date };
+  return { name: slug, date, emoji: emojiFor(m[4] || folder) };
 }
 fetch('days.json')
   .then(r => r.json())
@@ -46,9 +57,9 @@ fetch('days.json')
     const list = document.getElementById('list');
     if(!days.length){ list.innerHTML = '<div class="empty">No builds yet. Ship one today.</div>'; return; }
     days.forEach(folder => {
-      const { name, date } = pretty(folder);
+      const { name, date, emoji } = pretty(folder);
       const li = document.createElement('li');
-      li.innerHTML = '<a href="./'+folder+'/"><span class="name">'+name+'</span>'
+      li.innerHTML = '<a href="./'+folder+'/"><span class="name">'+emoji+' '+name+'</span>'
         + '<span class="date">'+date+'</span></a>';
       list.appendChild(li);
     });
