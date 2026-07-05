@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Daily Build — archive</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#fbfbfa;--ink:#1a1a19;--muted:#6b6b68;--faint:#9a9a96;--line:#e7e7e4}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:"Inter",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:640px;margin:0 auto;padding:64px 28px 96px}
+  h1{font-size:26px;font-weight:600;letter-spacing:-.02em;margin:0}
+  .sub{color:var(--muted);font-size:14px;margin:6px 0 40px}
+  .count{font-variant-numeric:tabular-nums}
+  ul{list-style:none;margin:0;padding:0}
+  li a{display:flex;justify-content:space-between;align-items:baseline;gap:16px;
+    text-decoration:none;color:var(--ink);padding:14px 4px;border-bottom:1px solid var(--line)}
+  li a:hover{color:#000}
+  li a:hover .name{text-decoration:underline;text-underline-offset:3px}
+  .name{font-weight:500;font-size:16px}
+  .date{color:var(--faint);font-size:13px;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .empty{color:var(--muted);font-size:15px;padding:20px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Daily Build</h1>
+  <p class="sub"><span class="count" id="count">0</span> prototypes and counting.</p>
+  <ul id="list"></ul>
+</div>
+<script>
+function pretty(folder){
+  const m = folder.match(/^(\d{4})-(\d{2})-(\d{2})-?(.*)$/);
+  if(!m) return { name: folder, date: '' };
+  const date = new Date(+m[1], +m[2]-1, +m[3])
+    .toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
+  const slug = m[4] ? m[4].replace(/[-_]+/g,' ') : folder;
+  return { name: slug, date };
+}
+fetch('days.json')
+  .then(r => r.json())
+  .then(days => {
+    document.getElementById('count').textContent = days.length;
+    const list = document.getElementById('list');
+    if(!days.length){ list.innerHTML = '<div class="empty">No builds yet. Ship one today.</div>'; return; }
+    days.forEach(folder => {
+      const { name, date } = pretty(folder);
+      const li = document.createElement('li');
+      li.innerHTML = '<a href="./'+folder+'/"><span class="name">'+name+'</span>'
+        + '<span class="date">'+date+'</span></a>';
+      list.appendChild(li);
+    });
+  })
+  .catch(() => {
+    document.getElementById('list').innerHTML =
+      '<div class="empty">Couldn\'t load days.json yet — push a build to populate it.</div>';
+  });
+</script>
+</body>
+</html>

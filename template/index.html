@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<title>daily build</title>
+<style>
+  html,body{margin:0;height:100%;background:#0e0e12;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center}
+  canvas{image-rendering:pixelated;image-rendering:crisp-edges;display:block}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
+</head>
+<body>
+<script>
+/* ══════════════════════════════════════════════════════
+   DAILY BUILD · p5.js template
+   ── Seed ──────────────────────────────────────────────
+   Prompt:   (paste today's oblique prompt here)
+   Riff on:  (paste today's classic here)
+   ══════════════════════════════════════════════════════ */
+
+/* ---------- CONFIG ---------- */
+const GAME_W = 320;      // logical pixels wide
+const GAME_H = 180;      // logical pixels tall
+const BG     = '#0e0e12';
+
+/* g = your pixel canvas. Draw EVERYTHING to it: g.rect(), g.fill(), g.text()… */
+let g, S = 1, OX = 0, OY = 0;   // scale + offsets, managed for you
+
+
+/* ══════════════════════════════════════════════════════
+   YOUR GAME   ── the only section you edit ──
+   Delete the demo, keep reset() / update(dt) / render().
+   ══════════════════════════════════════════════════════ */
+
+let p;   // demo player — delete all of this
+
+function reset(){
+  p = { x: GAME_W/2, y: GAME_H/2, vx: 70, vy: 48, sz: 12, squash: 1 };
+}
+
+function update(dt){
+  p.x += p.vx * dt;
+  p.y += p.vy * dt;
+
+  // bounce off the walls, with juice
+  if (p.x < p.sz/2)          { p.x = p.sz/2;          p.vx *= -1; hit(); }
+  if (p.x > GAME_W - p.sz/2) { p.x = GAME_W - p.sz/2; p.vx *= -1; hit(); }
+  if (p.y < p.sz/2)          { p.y = p.sz/2;          p.vy *= -1; hit(); }
+  if (p.y > GAME_H - p.sz/2) { p.y = GAME_H - p.sz/2; p.vy *= -1; hit(); }
+
+  // arrows / WASD nudge it, space resets
+  if (down('left'))  p.vx -= 140*dt;
+  if (down('right')) p.vx += 140*dt;
+  if (down('up'))    p.vy -= 140*dt;
+  if (down('down'))  p.vy += 140*dt;
+  if (pressed('space')) reset();
+}
+
+function hit(){
+  shake(3, 0.18);
+  beep(300, 0.05);
+  p.squash = 0.55;
+  tween(p, { squash: 1 }, 0.28, ease.outBack);
+}
+
+function render(){
+  g.background(BG);
+  g.noStroke();
+  g.fill('#ffffff');
+  const w = p.sz * (2 - p.squash), h = p.sz * p.squash;
+  g.rect(p.x - w/2, p.y - h/2, w, h, 2);
+
+  g.fill('#4b4b58');
+  g.textSize(8);
+  g.textAlign(LEFT, TOP);
+  g.text('arrows / wasd to nudge · space to reset', 6, 6);
+}
+
+
+/* ══════════════════════════════════════════════════════
+   ENGINE   ── helpers + loop, leave this alone ──
+   ══════════════════════════════════════════════════════ */
+
+/* ---- input ---- */
+const _held = new Set(), _pressed = new Set();
+let _clicked = false;
+
+function down(name){
+  name = name.toLowerCase();
+  if (name==='left')  return _held.has('arrowleft')  || _held.has('a');
+  if (name==='right') return _held.has('arrowright') || _held.has('d');
+  if (name==='up')    return _held.has('arrowup')    || _held.has('w');
+  if (name==='down')  return _held.has('arrowdown')  || _held.has('s');
+  if (name==='space') return _held.has(' ');
+  if (name==='enter') return _held.has('enter');
+  if (name==='esc')   return _held.has('escape');
+  return _held.has(name);                 // single letters, etc.
+}
+function pressed(name){
+  name = name.toLowerCase();
+  const map = { space:' ', enter:'enter', esc:'escape',
+                left:'arrowleft', right:'arrowright', up:'arrowup', down:'arrowdown' };
+  return _pressed.has(map[name] || name);
+}
+function mx(){ return (mouseX - OX) / S; }   // mouse in logical pixels
+function my(){ return (mouseY - OY) / S; }
+function clicked(){ return _clicked; }        // true only on the frame of a press
+
+/* ---- easing + tween ---- */
+const ease = {
+  linear:    t => t,
+  inQuad:    t => t*t,
+  outQuad:   t => 1-(1-t)*(1-t),
+  inOutQuad: t => t<.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2,
+  outCubic:  t => 1-Math.pow(1-t,3),
+  outBack:   t => { const c1=1.70158, c3=c1+1; return 1+c3*Math.pow(t-1,3)+c1*Math.pow(t-1,2); },
+  outElastic:t => { const c4=(2*Math.PI)/3; return t===0?0:t===1?1:Math.pow(2,-10*t)*Math.sin((t*10-0.75)*c4)+1; }
+};
+let _tweens = [];
+/* tween(obj, {prop: target,…}, seconds, ease.fn) — returns handle; set .onComplete */
+function tween(obj, target, dur, easing){
+  easing = easing || ease.linear;
+  const from = {}; for (const k in target) from[k] = obj[k];
+  const tw = { obj, target, from, dur, easing, t:0, done:false, onComplete:null };
+  _tweens.push(tw);
+  return tw;
+}
+function _updateTweens(dt){
+  for (const tw of _tweens){
+    tw.t += dt;
+    const u = tw.dur > 0 ? Math.min(tw.t/tw.dur, 1) : 1;
+    const e = tw.easing(u);
+    for (const k in tw.target) tw.obj[k] = tw.from[k] + (tw.target[k]-tw.from[k])*e;
+    if (u >= 1 && !tw.done){ tw.done = true; if (tw.onComplete) tw.onComplete(); }
+  }
+  _tweens = _tweens.filter(t => !t.done);
+}
+
+/* ---- screenshake ---- */
+let _shakeAmt=0, _shakeT=0, _shakeDur=0;
+function shake(px, secs){ _shakeAmt=px; _shakeDur=secs; _shakeT=secs; }   // px in logical pixels
+
+/* ---- sound (tiny Web Audio, no libraries) ---- */
+let _ac = null;
+function _audio(){
+  if (!_ac) _ac = new (window.AudioContext || window.webkitAudioContext)();
+  if (_ac.state === 'suspended') _ac.resume();
+  return _ac;
+}
+function beep(freq=440, dur=0.08, type='square', gain=0.15){
+  const ac=_audio(), o=ac.createOscillator(), gn=ac.createGain();
+  o.type=type; o.frequency.value=freq; o.connect(gn); gn.connect(ac.destination);
+  const t=ac.currentTime;
+  gn.gain.setValueAtTime(0.0001, t);
+  gn.gain.linearRampToValueAtTime(gain, t+0.005);
+  gn.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+  o.start(t); o.stop(t+dur+0.02);
+}
+function sweep(f1, f2, dur=0.15, type='square', gain=0.15){
+  const ac=_audio(), o=ac.createOscillator(), gn=ac.createGain();
+  o.type=type; o.connect(gn); gn.connect(ac.destination);
+  const t=ac.currentTime;
+  o.frequency.setValueAtTime(f1, t);
+  o.frequency.exponentialRampToValueAtTime(Math.max(1,f2), t+dur);
+  gn.gain.setValueAtTime(gain, t);
+  gn.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+  o.start(t); o.stop(t+dur+0.02);
+}
+
+/* ---- loop ---- */
+function setup(){
+  createCanvas(windowWidth, windowHeight);
+  pixelDensity(1); noSmooth();
+  g = createGraphics(GAME_W, GAME_H); g.noSmooth();
+  _fit();
+  // native input (more reliable than p5 key handling)
+  window.addEventListener('keydown', e => {
+    const k = e.key.toLowerCase();
+    if (!_held.has(k)) _pressed.add(k);
+    _held.add(k);
+    if (['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault();
+  });
+  window.addEventListener('keyup', e => _held.delete(e.key.toLowerCase()));
+  window.addEventListener('pointerdown', () => { _clicked = true; });
+  ['pointerdown','keydown','touchstart'].forEach(ev => window.addEventListener(ev, _audio));
+  reset();
+}
+function _fit(){
+  S  = Math.max(1, Math.floor(Math.min(width/GAME_W, height/GAME_H)));
+  OX = Math.floor((width  - GAME_W*S) / 2);
+  OY = Math.floor((height - GAME_H*S) / 2);
+}
+function windowResized(){ resizeCanvas(windowWidth, windowHeight); _fit(); }
+
+function draw(){
+  const dt = Math.min(deltaTime/1000, 1/30);   // clamp so tab-away doesn't teleport
+  _updateTweens(dt);
+  update(dt);
+  render();
+
+  _shakeT = Math.max(0, _shakeT - dt);
+  const amp = _shakeDur > 0 ? _shakeAmt*(_shakeT/_shakeDur) : 0;
+  const sx = amp ? Math.round(random(-amp, amp)) : 0;
+  const sy = amp ? Math.round(random(-amp, amp)) : 0;
+
+  background(BG);
+  image(g, OX + sx*S, OY + sy*S, GAME_W*S, GAME_H*S);
+
+  _pressed.clear();
+  _clicked = false;
+}
+</script>
+</body>
+</html>
