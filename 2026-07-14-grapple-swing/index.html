@@ -687,10 +687,12 @@ function render(){
     g.noStroke();
   }
 
-  // the scarf — earned by clearing every song, worn ever after
+  // the scarf — earned by clearing every song, worn ever after.
+  // trail[] runs oldest→newest, so i = last is AT the player: thick and solid
+  // there, tapering thin and faint out to the tail.
   if (scarfOn && trail.length > 1 && !dead){
     for (let i = trail.length-1; i > 0; i--){
-      const t = 1 - i/(trail.length-1);          // 1 at the player, 0 at the tail
+      const t = i/(trail.length-1);              // 1 at the player, 0 at the tail
       const a = trail[i], b = trail[i-1];
       g.strokeWeight(Math.max(1, Math.round(1 + t*3)));
       g.stroke(214 - (1-t)*70, 44 + (1-t)*30, 74 + (1-t)*40, 60 + t*195);
