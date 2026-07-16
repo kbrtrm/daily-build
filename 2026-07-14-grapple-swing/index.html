@@ -2,10 +2,18 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover" />
+<!-- Add to Home Screen runs it standalone — the only way to lose Safari's
+     toolbars on an iPhone, since iOS has no Fullscreen API there. -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="GRAPPLE" />
+<meta name="theme-color" content="#0e0e12" />
 <title>daily build</title>
 <style>
-  html,body{margin:0;height:100%;background:#0e0e12;overflow:hidden;
+  /* 100dvh tracks the browser chrome as it collapses; 100% is the fallback */
+  html,body{margin:0;height:100%;height:100dvh;background:#0e0e12;overflow:hidden;
     /* mobile: the game owns every gesture — no scroll, zoom or pull-to-refresh */
     touch-action:none;overscroll-behavior:none;
     -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
@@ -82,9 +90,22 @@ const APPLE_RED = '#d8352f';      // you are the APPLE in GR-APPLE
 let TOUCH = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
 let touchHold = false;
 const iniEl = document.getElementById('ini');
+/* Ask for real fullscreen on the first tap — must be inside the gesture.
+   Works on Android/desktop and kills the browser chrome. iPhone Safari has no
+   Fullscreen API at all, so there it's a no-op and the toolbars stay; Add to
+   Home Screen is the only way out of those, hence the meta tags above. */
+let fsAsked = false;
+function goFullscreen(){
+  if (fsAsked) return; fsAsked = true;
+  const el = document.documentElement;
+  const req = el.requestFullscreen || el.webkitRequestFullscreen;
+  if (!req || document.fullscreenElement || document.webkitFullscreenElement) return;
+  try { const r = req.call(el); if (r && r.catch) r.catch(()=>{}); } catch(e){}
+}
 window.addEventListener('touchstart', e => {
   TOUCH = true;
   if (e.target === iniEl) return;               // tapping the box is the box's business
+  goFullscreen();
   touchHold = true;
   if (e.cancelable) e.preventDefault();
 }, { passive:false });
@@ -1049,15 +1070,6 @@ function render(){
     if (blink) g.text(TOUCH ? 'tap to start' : 'press space / click', GAME_W/2, GAME_H/2 + 34);
   }
 
-  // A 320x180 game in portrait is always a letterbox strip — ask for landscape.
-  // Not over the results though: that screen reads fine in portrait, and it's
-  // where you sign your initials.
-  if (TOUCH && !won && height > width * 1.1){
-    g.fill(14,14,18,225); g.rect(0,0,GAME_W,GAME_H);
-    g.textAlign(CENTER, CENTER);
-    g.fill('#ffd76a'); g.textSize(11); g.text('rotate your device', GAME_W/2, GAME_H/2 - 6);
-    g.fill('#8a8a98'); g.textSize(7);  g.text('GRAPPLE wants landscape', GAME_W/2, GAME_H/2 + 8);
-  }
 }
 
 
