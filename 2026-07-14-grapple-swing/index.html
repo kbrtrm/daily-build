@@ -11,10 +11,14 @@
     -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
   body{display:flex;align-items:center;justify-content:center}
   canvas{image-rendering:pixelated;image-rendering:crisp-edges;display:block;touch-action:none}
-  /* Offscreen, but focusable — the only way to raise a soft keyboard for the
-     high-score initials. 16px font stops iOS zooming in on focus. */
-  #ini{position:fixed;bottom:2px;left:50%;width:2px;height:2px;opacity:0;
-    border:0;padding:0;background:transparent;color:transparent;font-size:16px}
+  /* The initials box on touch. A REAL, visible, tappable input parked over the
+     canvas — tapping it focuses natively, which is the only reliable way to
+     raise a soft keyboard (programmatic focus() fights iOS and loses). Styled
+     to pass for the canvas text. Sized/placed from the canvas each frame. */
+  #ini{position:fixed;display:none;z-index:20;margin:0;padding:0;
+    background:transparent;border:0;outline:0;text-align:center;
+    color:#fff;caret-color:#7fd4ff;font-weight:400;letter-spacing:.3em;
+    text-indent:.3em;font-family:'Fredoka One',system-ui,sans-serif}
   #back{position:fixed;top:8px;left:10px;z-index:10;text-decoration:none;color:#8a8a98;
     font:600 13px/1 -apple-system,system-ui,sans-serif;opacity:.5;
     transition:opacity .15s,color .15s;-webkit-user-select:none;user-select:none}
@@ -79,21 +83,40 @@ let TOUCH = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
 let touchHold = false;
 const iniEl = document.getElementById('ini');
 window.addEventListener('touchstart', e => {
-  touchHold = true; TOUCH = true;
-  if (entering){ iniEl.focus(); return; }        // let the tap raise the keyboard
+  TOUCH = true;
+  if (e.target === iniEl) return;               // tapping the box is the box's business
+  touchHold = true;
   if (e.cancelable) e.preventDefault();
 }, { passive:false });
 window.addEventListener('touchend', e => {
+  if (e.target === iniEl) return;
   touchHold = false;
-  if (!entering && e.cancelable) e.preventDefault();
+  if (e.cancelable) e.preventDefault();
 }, { passive:false });
 window.addEventListener('touchcancel', () => { touchHold = false; });
-// the input is the source of truth for initials on touch (soft keyboards fire
-// unreliable keydowns, so we read the value instead)
-if (iniEl) iniEl.addEventListener('input', () => {
-  initials = iniEl.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3);
-  iniEl.value = initials;
-});
+if (iniEl){
+  // the input is the source of truth for initials on touch — mobile keyboards
+  // fire unreliable keydowns, so read the value rather than the keystrokes
+  iniEl.addEventListener('input', () => {
+    initials = iniEl.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3);
+    iniEl.value = initials;
+  });
+  iniEl.addEventListener('keydown', e => {      // the keyboard's return key
+    if (e.key === 'Enter' && initials.length){ e.preventDefault(); signScore(); }
+  });
+}
+/* park the box over the canvas slots, at the canvas's current scale */
+function syncIniBox(show){
+  if (!iniEl) return;
+  if (!show){ if (iniEl.style.display !== 'none') iniEl.style.display = 'none'; return; }
+  const w = 104*S, h = 30*S;
+  iniEl.style.display  = 'block';
+  iniEl.style.left     = Math.round(OX + (GAME_W/2)*S - w/2) + 'px';
+  iniEl.style.top      = Math.round(OY + 70*S) + 'px';
+  iniEl.style.width    = Math.round(w) + 'px';
+  iniEl.style.height   = Math.round(h) + 'px';
+  iniEl.style.fontSize = Math.max(16, Math.round(17*S)) + 'px';   // <16 makes iOS zoom
+}
 /* Chunky + bubbly title face. Must be a BARE family name — p5's textFont()
    quotes whatever you hand it, so a font stack becomes one bogus family and
    silently falls back. Canvas text also doesn't trigger a webfont download on
@@ -711,6 +734,7 @@ function spark(x,y,c){
 function sx(x){ return x - cam; }
 
 function render(){
+  syncIniBox(won && entering && TOUCH);   // the DOM initials box, only while signing
   g.background(BG);
   g.noStroke();
 
@@ -923,16 +947,24 @@ function render(){
     if (entering){
       g.fill('#ffd76a'); g.textSize(9);
       g.text('NEW HIGH SCORE', GAME_W/2, 62);
-      // three slots, with a blinking cursor on the next one
-      for (let i=0; i<3; i++){
-        const bx = GAME_W/2 - 26 + i*26;
-        const has = i < initials.length;
-        g.fill(has ? '#ffffff' : (i === initials.length && bk ? '#7fd4ff' : '#33333f'));
-        g.textSize(16);
-        g.text(has ? initials[i] : '_', bx, 84);
+      if (TOUCH){
+        // the real input sits here and draws the letters itself; just give it
+        // a box to live in so it reads as part of the screen
+        g.noFill(); g.stroke(80, 80, 100); g.strokeWeight(1);
+        g.rect(GAME_W/2 - 52, 70, 104, 30, 3); g.noStroke();
+        if (!initials.length && bk){ g.fill('#33333f'); g.textSize(16); g.text('___', GAME_W/2, 86); }
+      } else {
+        // three slots, with a blinking cursor on the next one
+        for (let i=0; i<3; i++){
+          const bx = GAME_W/2 - 26 + i*26;
+          const has = i < initials.length;
+          g.fill(has ? '#ffffff' : (i === initials.length && bk ? '#7fd4ff' : '#33333f'));
+          g.textSize(16);
+          g.text(has ? initials[i] : '_', bx, 84);
+        }
       }
       g.fill('#6a6a7a'); g.textSize(7);
-      g.text(TOUCH ? 'tap to type  ·  return to sign'
+      g.text(TOUCH ? 'tap the box to type  ·  return to sign'
                    : 'type your initials  ·  enter to sign', GAME_W/2, 106);
     } else {
       const bd = boardFor(level);
@@ -1017,8 +1049,10 @@ function render(){
     if (blink) g.text(TOUCH ? 'tap to start' : 'press space / click', GAME_W/2, GAME_H/2 + 34);
   }
 
-  // a 320x180 game in portrait is always a letterbox strip — ask for landscape
-  if (TOUCH && height > width * 1.1){
+  // A 320x180 game in portrait is always a letterbox strip — ask for landscape.
+  // Not over the results though: that screen reads fine in portrait, and it's
+  // where you sign your initials.
+  if (TOUCH && !won && height > width * 1.1){
     g.fill(14,14,18,225); g.rect(0,0,GAME_W,GAME_H);
     g.textAlign(CENTER, CENTER);
     g.fill('#ffd76a'); g.textSize(11); g.text('rotate your device', GAME_W/2, GAME_H/2 - 6);
