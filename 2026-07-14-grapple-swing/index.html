@@ -52,6 +52,7 @@ const GRAB_R = 90;                // max reach to an anchor
 const AIR_ACC = 120;              // air steering
 const PUMP     = 150;             // auto-pump thrust along the swing (px/s²)
 const PUMP_MAX = 205;             // target tangential speed — swing self-limits here
+const APPLE_RED = '#d8352f';      // you are the APPLE in GR-APPLE
 
 /* A level IS a song. Each measure = one hook (a BASS note played on the grab)
    whose swing-arc carries that bar's MELODY notes as orbs. Play it clean —
@@ -722,22 +723,37 @@ function render(){
       const t = i/(trail.length-1);              // 1 at the player, 0 at the tail
       const a = trail[i], b = trail[i-1];
       g.strokeWeight(Math.max(1, Math.round(1 + t*3)));
-      g.stroke(214 - (1-t)*70, 44 + (1-t)*30, 74 + (1-t)*40, 60 + t*195);
+      // cream, not red — a crimson scarf vanishes against a red apple
+      g.stroke(245 - (1-t)*35, 232 - (1-t)*55, 200 - (1-t)*45, 60 + t*195);
       g.line(sx(a.x), a.y, sx(b.x), b.y);
     }
     g.noStroke(); g.strokeWeight(1);
   }
 
-  // player
+  // player — you are the apple. Squash/stretch still drives w/h.
   const px = sx(p.x), py = p.y;
-  // trail dot
-  g.fill(255, 40); g.ellipse(sx(p.tx), p.ty, 6, 6);
-  g.fill(dead ? '#ff5b5b' : '#ffffff');
   const w = p.sz*(2-p.squash), h = p.sz*p.squash;
-  g.rect(px - w/2, py - h/2, w, h, 3);
-  // eye toward travel
-  g.fill('#0e0e12');
-  g.ellipse(px + Math.cos(p.ang)*2, py + Math.sin(p.ang)*2 - 1, 2, 2);
+  // ghost of where you were
+  g.fill(216, 53, 47, 45); g.ellipse(sx(p.tx), p.ty, 6, 6);
+  // body — a touch wider than tall, with the two-lobe apple shoulders
+  g.fill(dead ? '#7e2622' : APPLE_RED);
+  g.ellipse(px - w*0.13, py + h*0.04, w*0.88, h*0.94);
+  g.ellipse(px + w*0.13, py + h*0.04, w*0.88, h*0.94);
+  g.ellipse(px, py + h*0.08, w*0.9, h*0.92);
+  // shine
+  g.fill(255, 255, 255, dead ? 30 : 105);
+  g.ellipse(px - w*0.23, py - h*0.2, w*0.26, h*0.22);
+  // stem + leaf, leaning the way you're going (the old eye's job)
+  const lean = Math.cos(p.ang);
+  g.stroke(dead ? '#4a3320' : '#6b4a2a'); g.strokeWeight(1);
+  g.line(px, py - h*0.40, px + lean*1.6, py - h*0.74);
+  g.noStroke();
+  g.push();
+  g.translate(px + lean*1.6 + 1.6, py - h*0.72);
+  g.rotate(-0.45 + lean*0.5);
+  g.fill(dead ? '#3d5c3c' : '#5cc25a');
+  g.ellipse(0, 0, 4.6, 2.3);
+  g.pop();
 
   // particles
   for (const s of parts){ g.fill(s.c); const r = Math.max(1, s.life*4); g.rect(sx(s.x)-r/2, s.y-r/2, r, r); }
@@ -887,7 +903,7 @@ function render(){
           const wx = GAME_W/2 - 30 + i*5;
           const wy = 116 + Math.sin(millis()/200 - i*0.5)*2;
           g.strokeWeight(Math.max(1, Math.round(1 + t*2)));
-          g.stroke(214 - (1-t)*70, 44 + (1-t)*30, 74 + (1-t)*40, 70 + t*185);
+          g.stroke(245 - (1-t)*35, 232 - (1-t)*55, 200 - (1-t)*45, 70 + t*185);
           g.point(wx, wy); g.line(wx, wy, wx+4, wy);
         }
         g.noStroke(); g.strokeWeight(1);
@@ -902,13 +918,14 @@ function render(){
   if (phase === 'title'){
     g.fill(14,14,18,190); g.rect(0,0,GAME_W,GAME_H);
     g.textAlign(CENTER, CENTER);
-    // GRAPPLE, each letter riding its own sine — a wave down the word
+    // GR-APPLE: each letter rides its own sine, and the APPLE goes apple-red
     const word = 'GRAPPLE';
-    g.textSize(20); g.fill('#ffffff');
+    g.textSize(20);
     const ws = [...word].map(c => g.textWidth(c));
     let lx = GAME_W/2 - ws.reduce((a,b)=>a+b, 0)/2;
     for (let i=0; i<word.length; i++){
       const bob = Math.sin(millis()/260 - i*0.55) * 4;
+      g.fill(i < 2 ? '#ffffff' : APPLE_RED);
       g.text(word[i], lx + ws[i]/2, GAME_H/2 - 28 + bob);
       lx += ws[i];
     }
