@@ -149,7 +149,11 @@ let mileT, mileMsg;       // milestone celebration timer + label
 let levelEndX;    // x of the finish gate
 let won;          // level cleared
 let level;        // current level index
-let startLock;    // opening hook stays attached until you first take hold
+let prevWant;     // was the grapple held last frame? (release on the edge)
+let trail;        // recent positions, for the scarf
+let scarfOn;      // scarf cosmetic unlocked?
+let scarfNew;     // just unlocked it this run
+let gameDone;     // cleared the last level
 let notesHit;     // melody notes actually played — drives the level score
 let entering;     // typing initials for a new high score
 let initials;     // what they've typed so far
@@ -211,8 +215,9 @@ function reset(){
   skipStreak = 0; pop = { t:0, msg:'' };
   chaser = { x: -300, on:false }; deathMsg = 'splat!';
   grabbed = false; spitUsed = false; aim = -0.9; aimDir = 1;
-  milestone = 0; mileT = 0; mileMsg = ''; won = false; startLock = false; notesHit = 0;
+  milestone = 0; mileT = 0; mileMsg = ''; won = false; prevWant = false; notesHit = 0;
   entering = false; initials = ''; lastScore = 0; lastPct = 0;
+  trail = []; scarfOn = hasScarf(); scarfNew = false; gameDone = false;
   level = level || 0;
   phase = 'title';
   best = best || 0;
@@ -242,6 +247,11 @@ function qualifies(lv, score){
   const b = boardFor(lv);
   return b.length < HS_MAX || score > b[b.length-1].score;
 }
+/* the scarf: earned once, worn forever after */
+const SCARF_KEY = 'grapple.scarf.v1';
+function hasScarf(){ try { return localStorage.getItem(SCARF_KEY) === '1'; } catch(e){ return false; } }
+function unlockScarf(){ try { localStorage.setItem(SCARF_KEY, '1'); } catch(e){} }
+
 function addScore(lv, ini, score, pct){
   const all = loadBoard();
   const list = all[lv] || [];
@@ -315,7 +325,8 @@ function hangAtStart(withHook){
   if (!withHook) return;
   a.used = true;
   hook = { anchor:a, len:ARC_R, taut:1 };  // rope = the orb arc radius
-  startLock = true;
+  prevWant = false;      // the title press is not a hold you established
+  trail = [];
   a.flash = 1; tween(a, { flash:0 }, 0.3, ease.outQuad);
   bassNote(a.bass, 0.8);                   // the opening downbeat
 }
@@ -373,7 +384,7 @@ function update(dt){
       return;                                    // space must not skip the entry
     }
     if (pressed('space') || clicked()){
-      if (level < LEVELS.length - 1) level++;    // on to the next song
+      level = gameDone ? 0 : level + 1;          // last song → back to the top
       reset();
     }
     return;
@@ -402,15 +413,14 @@ function update(dt){
   }
   if (pressed('esc')){ reset(); return; }          // bail back to the title
   const wantHook = mouseIsPressed || down('space');
-  if (startLock){
-    // You open the level already hooked, swinging. The lock holds until a
-    // FRESH press — not the held key that started the level, which would
-    // otherwise clear instantly and fling you off a dead hang on release.
-    if (pressed('space') || clicked()) startLock = false;
-  } else {
-    if (wantHook && !hook) fire();
-    if (!wantHook && hook)  release();
-  }
+  // You open the level already hooked. Release only on an actual LET-GO (a
+  // true→false edge), never on merely "not holding" — otherwise the press
+  // that started the level flings you off a dead hang the instant you lift
+  // it. So: hold from the title and let go → you fling, one press. Tap to
+  // start and sit there → you just keep swinging until you take hold.
+  if (wantHook && !hook) fire();
+  if (prevWant && !wantHook && hook) release();
+  prevWant = wantHook;
 
   // integrate
   p.vy += GRAV * dt;
@@ -535,6 +545,8 @@ function update(dt){
 
   // trail
   p.tx = p.tx*0.6 + p.x*0.4; p.ty = p.ty*0.6 + p.y*0.4;
+  trail.push({ x:p.x, y:p.y });                  // scarf history
+  if (trail.length > 18) trail.shift();
 
   // crash on ground
   if (p.y > GROUND - p.sz/2){ die('splat!', true); }
@@ -561,6 +573,10 @@ function winLevel(){
   lastPct   = Math.round(notesHit / Math.max(1, orbs.length) * 100);
   entering  = qualifies(level, lastScore);   // made the board? sign it
   initials  = '';
+  gameDone  = (level === LEVELS.length - 1); // that was the last song
+  if (gameDone && !hasScarf()){              // first clear ever → the scarf
+    unlockScarf(); scarfOn = true; scarfNew = true;
+  }
   const cols = ['#ffd76a','#7fd4ff','#ff8ad0','#ffffff'];
   for (let i=0;i<40;i++) parts.push(spark(p.x, p.y, cols[i%4]));
   // a little rising fanfare
@@ -671,6 +687,18 @@ function render(){
     g.noStroke();
   }
 
+  // the scarf — earned by clearing every song, worn ever after
+  if (scarfOn && trail.length > 1 && !dead){
+    for (let i = trail.length-1; i > 0; i--){
+      const t = 1 - i/(trail.length-1);          // 1 at the player, 0 at the tail
+      const a = trail[i], b = trail[i-1];
+      g.strokeWeight(Math.max(1, Math.round(1 + t*3)));
+      g.stroke(214 - (1-t)*70, 44 + (1-t)*30, 74 + (1-t)*40, 60 + t*195);
+      g.line(sx(a.x), a.y, sx(b.x), b.y);
+    }
+    g.noStroke(); g.strokeWeight(1);
+  }
+
   // player
   const px = sx(p.x), py = p.y;
   // trail dot
@@ -769,7 +797,9 @@ function render(){
     const bk = (Math.floor(millis()/450) % 2) === 0;
 
     g.fill('#ffd76a'); g.textSize(12);
-    g.text(lastPct === 100 ? 'perfect performance!' : 'level complete!', GAME_W/2, 16);
+    g.text(gameDone ? 'you played them all!'
+                    : (lastPct === 100 ? 'perfect performance!' : 'level complete!'),
+           GAME_W/2, 16);
     g.fill('#e8e8f0'); g.textSize(8);
     g.text(LEVELS[level].name + ' · ' + LEVELS[level].by, GAME_W/2, 29);
     g.fill(lastPct === 100 ? '#ffd76a' : '#7fd4ff'); g.textSize(8);
@@ -810,25 +840,50 @@ function render(){
         g.text(e.pct + '%', GAME_W/2 + 56, 72 + i*11);
         g.textAlign(CENTER, CENTER);
       }
+      // first time through → the scarf
+      if (gameDone && scarfNew){
+        g.fill('#ffd76a'); g.textSize(8);
+        g.text('unlocked · THE SCARF', GAME_W/2, 126);
+        g.fill('#8a8a98'); g.textSize(6);
+        g.text('it trails behind you from now on', GAME_W/2, 136);
+        // a little scarf, waving
+        for (let i=0; i<12; i++){
+          const t = 1 - i/11;
+          const wx = GAME_W/2 - 30 + i*5;
+          const wy = 116 + Math.sin(millis()/200 - i*0.5)*2;
+          g.strokeWeight(Math.max(1, Math.round(1 + t*2)));
+          g.stroke(214 - (1-t)*70, 44 + (1-t)*30, 74 + (1-t)*40, 70 + t*185);
+          g.point(wx, wy); g.line(wx, wy, wx+4, wy);
+        }
+        g.noStroke(); g.strokeWeight(1);
+      }
       g.fill('#ffffff'); g.textSize(8);
-      const more = level < LEVELS.length - 1;
-      if (bk) g.text(more ? 'press for level ' + (level+2) + ' · ' + LEVELS[level+1].name
-                          : 'press to play again', GAME_W/2, 138);
+      if (bk) g.text(gameDone ? 'press to start over'
+                              : 'press for level ' + (level+2) + ' · ' + LEVELS[level+1].name,
+                     GAME_W/2, gameDone && scarfNew ? 150 : 138);
     }
   }
 
   if (phase === 'title'){
     g.fill(14,14,18,190); g.rect(0,0,GAME_W,GAME_H);
     g.textAlign(CENTER, CENTER);
-    g.fill('#ffffff'); g.textSize(18);
-    g.text('GRAPPLE', GAME_W/2, GAME_H/2 - 26);
+    // GRAPPLE, each letter riding its own sine — a wave down the word
+    const word = 'GRAPPLE';
+    g.textSize(20); g.fill('#ffffff');
+    const ws = [...word].map(c => g.textWidth(c));
+    let lx = GAME_W/2 - ws.reduce((a,b)=>a+b, 0)/2;
+    for (let i=0; i<word.length; i++){
+      const bob = Math.sin(millis()/260 - i*0.55) * 4;
+      g.text(word[i], lx + ws[i]/2, GAME_H/2 - 28 + bob);
+      lx += ws[i];
+    }
+    g.fill('#e8e8f0'); g.textSize(12);
+    g.text(LEVELS[level].name, GAME_W/2, GAME_H/2 + 2);
     g.fill('#7fd4ff'); g.textSize(8);
-    g.text('swing the song — hooks are bass, orbs are melody', GAME_W/2, GAME_H/2 - 8);
-    g.fill('#9a9aab'); g.textSize(8);
-    g.text('level ' + (level+1) + ' · ' + LEVELS[level].name + ' · ' + LEVELS[level].by, GAME_W/2, GAME_H/2 + 8);
+    g.text('level ' + (level+1) + ' · ' + LEVELS[level].by, GAME_W/2, GAME_H/2 + 16);
     g.fill('#ffffff'); g.textSize(9);
     const blink = (Math.floor(millis()/450) % 2) === 0;
-    if (blink) g.text('press space / click', GAME_W/2, GAME_H/2 + 26);
+    if (blink) g.text('press space / click', GAME_W/2, GAME_H/2 + 34);
   }
 }
 
