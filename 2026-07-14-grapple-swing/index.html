@@ -74,6 +74,44 @@ const E4=329.63, Fs4=369.99, G4=392.00, A4=440.00, B4=493.88,
       Cs5=554.37, Fs5=739.99, A5=880.00;
 // Für Elise lives in A minor
 const E2=82.41, Gs4=415.30, Ds5=622.25;
+
+/* Pachelbel's ground, and three melodies to lay over it. Built rather than
+   spelled out twice — the whole point of the piece is that the bass repeats. */
+const CANON_GROUND = [D3, A2, B2, Fs2, G2, D2, G2, A2];
+const CANON_MELODIES = [
+  // quarters — the line everyone hums
+  [[Fs5,E5],[D5,Cs5],[B4,A4],[B4,Cs5],[D5,Cs5],[B4,A4],[G4,Fs4],[G4,E4]],
+  // running eighths, chord tones
+  [[Fs5,A5,Fs5,D5],[E5,Cs5,E5,A4],[D5,B4,D5,Fs5],[Cs5,A4,Cs5,Fs4],
+   [B4,D5,B4,G4],[A4,Fs5,A4,D5],[B4,G4,B4,D5],[Cs5,E5,Cs5,A4]],
+  // a descending line over the same ground
+  [[Fs5,E5,D5,Cs5],[E5,D5,Cs5,B4],[D5,Cs5,B4,A4],[Cs5,B4,A4,Fs4],
+   [B4,A4,G4,Fs4],[A4,G4,Fs4,E4],[B4,D5,G4,B4],[Cs5,E5,A4,Cs5]],
+];
+function canonCycles(){
+  return CANON_MELODIES.flatMap(mels =>
+    CANON_GROUND.map((bass, i) => ({ bass, mel: mels[i], beats: 2 })));
+}
+
+/* Für Elise's A section — the piece repeats it verbatim, so we do too. */
+const FUR_A = [
+  { bass:A2, mel:[E5,Ds5,E5,Ds5]  },   // Am : the trill
+  { bass:A2, mel:[E5,B4,D5,C5]    },   // Am : E B D C
+  { bass:A2, mel:[A4,E4,A4,B4]    },   // Am : land on A, arpeggio up, B
+  { bass:E2, mel:[E4,Gs4,B4,C5]   },   // E  : E G# B → C
+  { bass:A2, mel:[E4,E5,Ds5,E5]   },   // Am : back into the trill
+  { bass:A2, mel:[Ds5,E5,B4,D5]   },   // Am
+  { bass:A2, mel:[C5,A4,E4,A4]    },   // Am : resolve, arpeggio
+  { bass:E2, mel:[B4,E4,Gs4,B4]   },   // E
+  { bass:A2, mel:[C5,E4,E5,Ds5]   },   // Am : and again
+  { bass:A2, mel:[E5,Ds5,E5,B4]   },   // Am
+  { bass:A2, mel:[D5,C5,A4], beats:4 },// Am : resolve, held
+];
+const FUR_CODA = [
+  { bass:E2, mel:[B4,C5,E5,A4]    },   // E  : lift
+  { bass:A2, mel:[C5,B4,A4], beats:4 },// Am : final resolve, held
+];
+
 const LEVELS = [
   /* One entry = one hook = one swing. `mel` can hold ANY number of notes —
      the arc sweep widens to fit them. `beats` is how long the swing lasts in
@@ -92,47 +130,17 @@ const LEVELS = [
   ] },
 
   /* The Canon is built ON its bass — that 8-note ground (D A B F# G D G A) is
-     the famous part, so here the HOOKS carry the tune. It repeats the ground
-     twice: first under the quarter-note melody, then under running eighths,
-     which is exactly how the piece builds. Two notes per swing, then four. */
-  { name:'Canon in D', by:'Pachelbel', beatDx:48, measures:[
-    // ── cycle 1: the ground bass under the classic melody (2 notes/swing)
-    { bass:D3,  mel:[Fs5,E5]  },   // D  : F# E
-    { bass:A2,  mel:[D5,Cs5]  },   // A  : D  C#
-    { bass:B2,  mel:[B4,A4]   },   // Bm : B  A
-    { bass:Fs2, mel:[B4,Cs5]  },   // F#m: B  C#
-    { bass:G2,  mel:[D5,Cs5]  },   // G  : D  C#
-    { bass:D2,  mel:[B4,A4]   },   // D  : B  A
-    { bass:G2,  mel:[G4,Fs4]  },   // G  : G  F#
-    { bass:A2,  mel:[G4,E4]   },   // A7 : G  E   → pulls back to D
-    // ── cycle 2: same ground, melody breaks into eighths (4 notes/swing)
-    { bass:D3,  mel:[Fs5,A5,Fs5,D5],  beats:2 },   // D
-    { bass:A2,  mel:[E5,Cs5,E5,A4],   beats:2 },   // A
-    { bass:B2,  mel:[D5,B4,D5,Fs5],   beats:2 },   // Bm
-    { bass:Fs2, mel:[Cs5,A4,Cs5,Fs4], beats:2 },   // F#m
-    { bass:G2,  mel:[B4,D5,B4,G4],    beats:2 },   // G
-    { bass:D2,  mel:[A4,Fs5,A4,D5],   beats:2 },   // D
-    { bass:G2,  mel:[B4,G4,B4,D5],    beats:2 },   // G
-    { bass:A2,  mel:[Cs5,E5,Cs5,A4],  beats:2 },   // A7 → resolve
-  ] },
+     the famous part, so here the HOOKS carry the tune. The ground repeats
+     three times while the melody above it thickens: quarters, then running
+     eighths, then a descending line. That's how the piece actually builds. */
+  { name:'Canon in D', by:'Pachelbel', beatDx:48, measures: canonCycles() },
 
   /* Für Elise: the bass is a plain Am/E alternation — here the MELODY is the
      antagonist. That chromatic E–D#–E–D# trill is four tight notes on one
-     swing, and the tempo is quicker (beatDx 28) so the hooks come at you
-     faster than either earlier level. */
-  { name:'Für Elise', by:'Beethoven', beatDx:28, measures:[
-    { bass:A2, mel:[E5,Ds5,E5,Ds5]  },   // Am : the trill
-    { bass:A2, mel:[E5,B4,D5,C5]    },   // Am : E B D C
-    { bass:A2, mel:[A4,E4,A4,B4]    },   // Am : land on A, arpeggio up, B
-    { bass:E2, mel:[E4,Gs4,B4,C5]   },   // E  : E G# B → C
-    { bass:A2, mel:[E4,E5,Ds5,E5]   },   // Am : back into the trill
-    { bass:A2, mel:[Ds5,E5,B4,D5]   },   // Am
-    { bass:A2, mel:[C5,A4,E4,A4]    },   // Am : resolve, arpeggio
-    { bass:E2, mel:[B4,E4,Gs4,B4]   },   // E
-    { bass:A2, mel:[C5,E4,E5,Ds5]   },   // Am : and again
-    { bass:A2, mel:[E5,Ds5,E5,B4]   },   // Am
-    { bass:A2, mel:[D5,C5,A4], beats:4 },// Am : final resolve, held
-  ] },
+     swing, the tempo is quicker (beatDx 28), and the A section runs twice
+     before the coda — the longest of the three. */
+  { name:'Für Elise', by:'Beethoven', beatDx:28,
+    measures: [...FUR_A, ...FUR_A, ...FUR_CODA] },
 ];
 
 let phase;        // 'title' | 'play'
@@ -143,7 +151,7 @@ let orbs;         // [{x,y,got}]
 let parts;        // particles
 let hook;         // {anchor, len, taut} or null
 let dead, deadT;  // crash state
-let best, run;    // best distance, current run distance
+let run;          // distance + bonuses this run
 let combo;        // orbs grabbed without crashing
 let camY;         // vertical camera offset — follows you when you fly high
 let skipStreak;   // hooks flown past without grabbing
@@ -160,10 +168,15 @@ let levelEndX;    // x of the finish gate
 let won;          // level cleared
 let level;        // current level index
 let prevWant;     // was the grapple held last frame? (release on the edge)
+let noGrab;       // { anchor, t } — the hook you just let go of, briefly off-limits
 let trail;        // recent positions, for the scarf
 let scarfOn;      // scarf cosmetic unlocked?
 let scarfNew;     // just unlocked it this run
-let gameDone;     // cleared the last level
+let gameDone;     // cleared every level this playthrough
+/* Levels cleared since starting from level 1. Deliberately NOT reset by
+   reset() — dying and retrying keeps your progress — only wiped when you
+   start the game over. The scarf takes all of them. */
+let clearedRun = new Set();
 let notesHit;     // melody notes actually played — drives the level score
 let entering;     // typing initials for a new high score
 let initials;     // what they've typed so far
@@ -226,11 +239,11 @@ function reset(){
   chaser = { x: -300, on:false }; deathMsg = 'splat!';
   grabbed = false; spitUsed = false; aim = -0.9; aimDir = 1;
   milestone = 0; mileT = 0; mileMsg = ''; won = false; prevWant = false; notesHit = 0;
+  noGrab = { anchor:null, t:0 };
   entering = false; initials = ''; lastScore = 0; lastPct = 0;
   trail = []; scarfOn = hasScarf(); scarfNew = false; gameDone = false;
   level = level || 0;
   phase = 'title';
-  best = best || 0;
   stars = [];
   for (let i=0;i<40;i++) stars.push({ x: rnd()*GAME_W*4, y: rnd()*GROUND, z: 0.2+rnd()*0.5 });
   _seed = 1337;
@@ -357,7 +370,7 @@ function hangAtStart(withHook){
   const th = -0.55;                        // just behind the bar's first orb
   p.x = a.x + Math.sin(th)*ARC_R;
   p.y = a.y + Math.cos(th)*ARC_R;
-  p.vx = 40; p.vy = 0;
+  p.vx = 90; p.vy = 0;          // open with real momentum, not a limp hang
   if (!withHook) return;
   a.used = true;
   hook = { anchor:a, len:ARC_R, taut:1 };  // rope = the orb arc radius
@@ -367,10 +380,14 @@ function hangAtStart(withHook){
   bassNote(a.bass, 0.8);                   // the opening downbeat
 }
 
-/* nearest anchor within reach & above-ish the player */
+/* nearest anchor within reach & above-ish the player — but NOT the one you
+   just let go of. Without this, letting go and holding again (the whole point
+   of "hold to swing") instantly re-grabs the hook you just left, because it's
+   still the nearest thing in range, and you can never move forward. */
 function pickAnchor(){
   let best=null, bd=GRAB_R;
   for (const a of anchors){
+    if (a === noGrab.anchor && noGrab.t > 0) continue;
     const dx=a.x-p.x, dy=a.y-p.y, d=Math.hypot(dx,dy);
     if (d < bd && a.y < p.y + 30){ bd=d; best=a; }
   }
@@ -390,6 +407,7 @@ function fire(){
 
 function release(){
   if (!hook) return;
+  noGrab = { anchor: hook.anchor, t: 0.55 };   // can't snap straight back onto it
   hook = null;
   p.squash = 0.6; tween(p, { squash:1 }, 0.3, ease.outBack);
   sweep(680, 240, 0.14, 'sine', 0.1);
@@ -420,7 +438,8 @@ function update(dt){
       return;                                    // space must not skip the entry
     }
     if (pressed('space') || clicked()){
-      level = gameDone ? 0 : level + 1;          // last song → back to the top
+      if (level < LEVELS.length - 1) level++;    // next song
+      else { level = 0; clearedRun.clear(); }    // start the game over
       reset();
     }
     return;
@@ -448,6 +467,7 @@ function update(dt){
     return;
   }
   if (pressed('esc')){ reset(); return; }          // bail back to the title
+  if (noGrab.t > 0) noGrab.t -= dt;
   const wantHook = mouseIsPressed || down('space');
   // You open the level already hooked. Release only on an actual LET-GO (a
   // true→false edge), never on merely "not holding" — otherwise the press
@@ -505,7 +525,6 @@ function update(dt){
   const camYT = Math.min(0, p.y - GAME_H*0.55);
   camY += (camYT - camY) * Math.min(1, 6*dt);
   run = Math.max(run, Math.floor(p.x/10));
-  if (run > best) best = run;
   // crossed a 100m marker? celebrate
   const hund = Math.floor(p.x / 1000);
   if (hund > milestone){ milestone = hund; celebrate(hund * 100); }
@@ -522,7 +541,7 @@ function update(dt){
       a.skipped = true;
       skipStreak++;
       const bonus = 4 + skipStreak*3;
-      run += bonus; if (run > best) best = run;
+      run += bonus;
       pop = { t:0.85, msg: 'skip +' + bonus + (skipStreak > 1 ? '  ×'+skipStreak : '') };
       for (let i=0;i<8;i++) parts.push(spark(a.x, a.y, '#7fd4ff'));
       sweep(320 + skipStreak*55, 760 + skipStreak*70, 0.12, 'sine', 0.09);
@@ -556,7 +575,7 @@ function update(dt){
     if (Math.hypot(o.x-p.x, o.y-p.y) < 11){
       o.got = true; o.t = 0;
       combo++; notesHit++;
-      run += 3 + combo; if (run>best) best=run;
+      run += 3 + combo;
       for (let i=0;i<10;i++) parts.push(spark(o.x, o.y, '#ffd76a'));
       // each orb sings its own melody note, ringing on a little
       melodyNote(o.note, 0.34);
@@ -609,9 +628,10 @@ function winLevel(){
   lastPct   = Math.round(notesHit / Math.max(1, orbs.length) * 100);
   entering  = qualifies(level, lastScore);   // made the board? sign it
   initials  = '';
-  gameDone  = (level === LEVELS.length - 1); // that was the last song
-  fetchBoard();                              // refresh the global board
-  if (gameDone && !hasScarf()){              // first clear ever → the scarf
+  clearedRun.add(level);
+  gameDone  = clearedRun.size === LEVELS.length;   // every song, this playthrough
+  fetchBoard();                                    // refresh the global board
+  if (gameDone && !hasScarf()){                    // beat the game → the scarf
     unlockScarf(); scarfOn = true; scarfNew = true;
   }
   const cols = ['#ffd76a','#7fd4ff','#ff8ad0','#ffffff'];
@@ -826,17 +846,8 @@ function render(){
   // HUD
   g.fill('#e8e8f0'); g.textSize(9); g.textAlign(LEFT, TOP);
   g.text(run + 'm', 6, 6);
-  g.fill('#5a5a6a'); g.textSize(7);
-  g.text('best ' + best, 6, 17);
-  if (combo > 1){
-    g.fill('#ffd76a'); g.textSize(8); g.textAlign(LEFT, TOP);
-    g.text('×' + combo, 46, 7);
-  }
-  // notes of the song you've actually played
-  g.fill('#9a9aab'); g.textSize(7); g.textAlign(LEFT, TOP);
-  g.text('♪ ' + notesHit + '/' + orbs.length, 6, 26);
-  g.textAlign(RIGHT, TOP); g.fill('#4b4b58');
-  g.text('hold to swing  ·  esc: title', GAME_W-6, 6);
+  g.textAlign(RIGHT, TOP); g.fill('#4b4b58'); g.textSize(7);
+  g.text('space to hold, release to jump  ·  esc: title', GAME_W-6, 6);
 
   if (dead){
     g.textAlign(CENTER, CENTER); g.fill('#ff8a8a'); g.textSize(11);
@@ -918,8 +929,9 @@ function render(){
         g.noStroke(); g.strokeWeight(1);
       }
       g.fill('#ffffff'); g.textSize(8);
-      if (bk) g.text(gameDone ? 'press to start over'
-                              : 'press for level ' + (level+2) + ' · ' + LEVELS[level+1].name,
+      const more = level < LEVELS.length - 1;    // guard: LEVELS[level+1] must exist
+      if (bk) g.text(more ? 'press for level ' + (level+2) + ' · ' + LEVELS[level+1].name
+                          : 'press to start over',
                      GAME_W/2, gameDone && scarfNew ? 150 : 138);
     }
   }

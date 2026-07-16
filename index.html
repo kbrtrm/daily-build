@@ -31,6 +31,13 @@
   <ul id="list"></ul>
 </div>
 <script>
+// Hand-written titles, keyed by folder. Anything not listed falls back to the
+// slug + a keyword-guessed emoji below.
+const TITLES = {
+  '2026-07-14-grapple-swing':  { name: 'GRAPPLE',             emoji: '🍎' },
+  '2026-07-05-momentum-snake': { name: 'brake snake',         emoji: '🐍' },
+  '2026-07-05-juggle':         { name: 'the fall of a clown', emoji: '🤹' },
+};
 // pick an emoji from keywords in the slug (first match wins; 🎮 fallback)
 function emojiFor(s){
   const map = [
@@ -47,6 +54,8 @@ function pretty(folder){
   if(!m) return { name: folder, date: '', emoji: '🎮' };
   const date = new Date(+m[1], +m[2]-1, +m[3])
     .toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
+  const titled = TITLES[folder];
+  if(titled) return { name: titled.name, date, emoji: titled.emoji };
   const slug = m[4] ? m[4].replace(/[-_]+/g,' ') : folder;
   return { name: slug, date, emoji: emojiFor(m[4] || folder) };
 }
