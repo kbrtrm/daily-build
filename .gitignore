@@ -1,2 +1,5 @@
 .DS_Store
 .claude/
+
+# wrangler local state (account cache, build artifacts)
+.wrangler/
