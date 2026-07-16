@@ -5,9 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
 <title>daily build</title>
 <style>
-  html,body{margin:0;height:100%;background:#0e0e12;overflow:hidden}
+  html,body{margin:0;height:100%;background:#0e0e12;overflow:hidden;
+    /* mobile: the game owns every gesture — no scroll, zoom or pull-to-refresh */
+    touch-action:none;overscroll-behavior:none;
+    -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
   body{display:flex;align-items:center;justify-content:center}
-  canvas{image-rendering:pixelated;image-rendering:crisp-edges;display:block}
+  canvas{image-rendering:pixelated;image-rendering:crisp-edges;display:block;touch-action:none}
+  /* Offscreen, but focusable — the only way to raise a soft keyboard for the
+     high-score initials. 16px font stops iOS zooming in on focus. */
+  #ini{position:fixed;bottom:2px;left:50%;width:2px;height:2px;opacity:0;
+    border:0;padding:0;background:transparent;color:transparent;font-size:16px}
   #back{position:fixed;top:8px;left:10px;z-index:10;text-decoration:none;color:#8a8a98;
     font:600 13px/1 -apple-system,system-ui,sans-serif;opacity:.5;
     transition:opacity .15s,color .15s;-webkit-user-select:none;user-select:none}
@@ -19,6 +26,8 @@
 </head>
 <body>
 <a id="back" href="../" title="back to the shelf">‹ shelf</a>
+<input id="ini" type="text" maxlength="3" autocomplete="off" autocorrect="off"
+       autocapitalize="characters" spellcheck="false" aria-label="your initials" />
 <script>
 /* ══════════════════════════════════════════════════════
    DAILY BUILD · p5.js template
@@ -55,6 +64,36 @@ const AIR_ACC = 120;              // air steering
 const PUMP     = 150;             // auto-pump thrust along the swing (px/s²)
 const PUMP_MAX = 205;             // target tangential speed — swing self-limits here
 const APPLE_RED = '#d8352f';      // you are the APPLE in GR-APPLE
+
+/* ---- touch ----
+   Tap-and-hold to swing, lift to jump — same verb as the mouse/space.
+   p5's mouseIsPressed can't be trusted for a held touch, so we track it
+   ourselves. preventDefault kills scroll/zoom/pull-to-refresh mid-swing, but
+   is skipped while typing initials so the tap can still focus the input —
+   and iOS only opens a keyboard if focus() happens INSIDE the gesture, not
+   from the draw loop, so that call has to live right here. */
+// Guess from capability, but flip on the first real touch — hybrid laptops
+// report touch support while being driven by a mouse, and should read as mouse
+// until a finger actually lands.
+let TOUCH = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+let touchHold = false;
+const iniEl = document.getElementById('ini');
+window.addEventListener('touchstart', e => {
+  touchHold = true; TOUCH = true;
+  if (entering){ iniEl.focus(); return; }        // let the tap raise the keyboard
+  if (e.cancelable) e.preventDefault();
+}, { passive:false });
+window.addEventListener('touchend', e => {
+  touchHold = false;
+  if (!entering && e.cancelable) e.preventDefault();
+}, { passive:false });
+window.addEventListener('touchcancel', () => { touchHold = false; });
+// the input is the source of truth for initials on touch (soft keyboards fire
+// unreliable keydowns, so we read the value instead)
+if (iniEl) iniEl.addEventListener('input', () => {
+  initials = iniEl.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3);
+  iniEl.value = initials;
+});
 /* Chunky + bubbly title face. Must be a BARE family name — p5's textFont()
    quotes whatever you hand it, so a font stack becomes one bogus family and
    silently falls back. Canvas text also doesn't trigger a webfont download on
@@ -425,14 +464,15 @@ function update(dt){
     if (mileT > 0) mileT = Math.max(0, mileT - dt);
 
     if (entering){
-      // arcade initials: type up to 3 letters, backspace to fix, enter to sign
-      for (const k of _pressed){
-        if (/^[a-z]$/.test(k) && initials.length < 3) initials += k.toUpperCase();
-        else if (k === 'backspace') initials = initials.slice(0, -1);
-        else if (k === 'enter' && initials.length){
-          addScore(level, initials, lastScore, lastPct);
-          entering = false;
-          beep(880, 0.08, 'triangle', 0.10); beep(1318.5, 0.14, 'sine', 0.06);
+      if (TOUCH){
+        // the hidden input drives `initials`; just watch for the return key
+        if (_pressed.has('enter') && initials.length) signScore();
+      } else {
+        // arcade initials: type up to 3 letters, backspace to fix, enter to sign
+        for (const k of _pressed){
+          if (/^[a-z]$/.test(k) && initials.length < 3) initials += k.toUpperCase();
+          else if (k === 'backspace') initials = initials.slice(0, -1);
+          else if (k === 'enter' && initials.length) signScore();
         }
       }
       return;                                    // space must not skip the entry
@@ -468,7 +508,7 @@ function update(dt){
   }
   if (pressed('esc')){ reset(); return; }          // bail back to the title
   if (noGrab.t > 0) noGrab.t -= dt;
-  const wantHook = mouseIsPressed || down('space');
+  const wantHook = mouseIsPressed || down('space') || touchHold;
   // You open the level already hooked. Release only on an actual LET-GO (a
   // true→false edge), never on merely "not holding" — otherwise the press
   // that started the level flings you off a dead hang the instant you lift
@@ -620,6 +660,13 @@ function die(msg, atGround){
   for (let i=0;i<18;i++) parts.push(spark(p.x, yy, '#ff5b5b'));
 }
 
+function signScore(){
+  addScore(level, initials, lastScore, lastPct);
+  entering = false;
+  if (iniEl){ iniEl.blur(); iniEl.value = ''; }   // drop the soft keyboard
+  beep(880, 0.08, 'triangle', 0.10); beep(1318.5, 0.14, 'sine', 0.06);
+}
+
 function winLevel(){
   won = true; hook = null; chaser.on = false;
   mileT = 0; pop.t = 0;          // clear any in-flight popups so they don't
@@ -628,6 +675,7 @@ function winLevel(){
   lastPct   = Math.round(notesHit / Math.max(1, orbs.length) * 100);
   entering  = qualifies(level, lastScore);   // made the board? sign it
   initials  = '';
+  if (iniEl) iniEl.value = '';
   clearedRun.add(level);
   gameDone  = clearedRun.size === LEVELS.length;   // every song, this playthrough
   fetchBoard();                                    // refresh the global board
@@ -847,7 +895,8 @@ function render(){
   g.fill('#e8e8f0'); g.textSize(9); g.textAlign(LEFT, TOP);
   g.text(run + 'm', 6, 6);
   g.textAlign(RIGHT, TOP); g.fill('#4b4b58'); g.textSize(7);
-  g.text('space to hold, release to jump  ·  esc: title', GAME_W-6, 6);
+  g.text(TOUCH ? 'tap to hold, release to jump'
+               : 'space to hold, release to jump  ·  esc: title', GAME_W-6, 6);
 
   if (dead){
     g.textAlign(CENTER, CENTER); g.fill('#ff8a8a'); g.textSize(11);
@@ -883,7 +932,8 @@ function render(){
         g.text(has ? initials[i] : '_', bx, 84);
       }
       g.fill('#6a6a7a'); g.textSize(7);
-      g.text('type your initials  ·  enter to sign', GAME_W/2, 106);
+      g.text(TOUCH ? 'tap to type  ·  return to sign'
+                   : 'type your initials  ·  enter to sign', GAME_W/2, 106);
     } else {
       const bd = boardFor(level);
       g.fill('#9a9aab'); g.textSize(7);
@@ -964,7 +1014,15 @@ function render(){
     g.text('level ' + (level+1) + ' · ' + LEVELS[level].by, GAME_W/2, GAME_H/2 + 16);
     g.fill('#ffffff'); g.textSize(9);
     const blink = (Math.floor(millis()/450) % 2) === 0;
-    if (blink) g.text('press space / click', GAME_W/2, GAME_H/2 + 34);
+    if (blink) g.text(TOUCH ? 'tap to start' : 'press space / click', GAME_W/2, GAME_H/2 + 34);
+  }
+
+  // a 320x180 game in portrait is always a letterbox strip — ask for landscape
+  if (TOUCH && height > width * 1.1){
+    g.fill(14,14,18,225); g.rect(0,0,GAME_W,GAME_H);
+    g.textAlign(CENTER, CENTER);
+    g.fill('#ffd76a'); g.textSize(11); g.text('rotate your device', GAME_W/2, GAME_H/2 - 6);
+    g.fill('#8a8a98'); g.textSize(7);  g.text('GRAPPLE wants landscape', GAME_W/2, GAME_H/2 + 8);
   }
 }
 
@@ -1078,7 +1136,11 @@ function setup(){
   reset();
 }
 function _fit(){
-  S  = Math.max(1, Math.floor(Math.min(width/GAME_W, height/GAME_H)));
+  // Integer scale keeps the pixels crisp, but floor() on a phone gives 1x —
+  // a 320x180 postage stamp on a tall screen. So: snap to whole pixels when
+  // there's room (2x+), otherwise scale fractionally to fill.
+  const raw = Math.min(width/GAME_W, height/GAME_H);
+  S  = raw >= 2 ? Math.floor(raw) : Math.max(0.5, raw);
   OX = Math.floor((width  - GAME_W*S) / 2);
   OY = Math.floor((height - GAME_H*S) / 2);
 }
