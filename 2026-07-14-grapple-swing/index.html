@@ -130,6 +130,7 @@ let levelEndX;    // x of the finish gate
 let won;          // level cleared
 let level;        // current level index
 let startLock;    // opening hook stays attached until you first take hold
+let notesHit;     // melody notes actually played — drives the level score
 let stars;        // parallax dots
 
 /* deterministic-ish generator so the course is varied but not jittery */
@@ -187,7 +188,7 @@ function reset(){
   skipStreak = 0; pop = { t:0, msg:'' };
   chaser = { x: -300, on:false }; deathMsg = 'splat!';
   grabbed = false; spitUsed = false; aim = -0.9; aimDir = 1;
-  milestone = 0; mileT = 0; mileMsg = ''; won = false; startLock = false;
+  milestone = 0; mileT = 0; mileMsg = ''; won = false; startLock = false; notesHit = 0;
   level = level || 0;
   phase = 'title';
   best = best || 0;
@@ -336,9 +337,10 @@ function update(dt){
   if (pressed('esc')){ reset(); return; }          // bail back to the title
   const wantHook = mouseIsPressed || down('space');
   if (startLock){
-    // you open the level already hooked; it holds until you take the grapple,
-    // then normal hold-to-swing / let-go-to-fling rules apply
-    if (wantHook) startLock = false;
+    // You open the level already hooked, swinging. The lock holds until a
+    // FRESH press — not the held key that started the level, which would
+    // otherwise clear instantly and fling you off a dead hang on release.
+    if (pressed('space') || clicked()) startLock = false;
   } else {
     if (wantHook && !hook) fire();
     if (!wantHook && hook)  release();
@@ -439,7 +441,7 @@ function update(dt){
     o.t += dt;
     if (Math.hypot(o.x-p.x, o.y-p.y) < 11){
       o.got = true; o.t = 0;
-      combo++;
+      combo++; notesHit++;
       run += 3 + combo; if (run>best) best=run;
       for (let i=0;i<10;i++) parts.push(spark(o.x, o.y, '#ffd76a'));
       // each orb sings its own melody note, ringing on a little
@@ -485,6 +487,8 @@ function die(msg, atGround){
 
 function winLevel(){
   won = true; hook = null; chaser.on = false;
+  mileT = 0; pop.t = 0;          // clear any in-flight popups so they don't
+                                 // collide with the results screen
   const cols = ['#ffd76a','#7fd4ff','#ff8ad0','#ffffff'];
   for (let i=0;i<40;i++) parts.push(spark(p.x, p.y, cols[i%4]));
   // a little rising fanfare
@@ -674,6 +678,9 @@ function render(){
     g.fill('#ffd76a'); g.textSize(8); g.textAlign(LEFT, TOP);
     g.text('×' + combo, 46, 7);
   }
+  // notes of the song you've actually played
+  g.fill('#9a9aab'); g.textSize(7); g.textAlign(LEFT, TOP);
+  g.text('♪ ' + notesHit + '/' + orbs.length, 6, 26);
   g.textAlign(RIGHT, TOP); g.fill('#4b4b58');
   g.text('hold to swing  ·  esc: title', GAME_W-6, 6);
 
@@ -685,19 +692,26 @@ function render(){
   }
 
   if (won){
-    g.fill(14,14,18,150); g.rect(0,0,GAME_W,GAME_H);
+    const total = orbs.length, pct = Math.round(notesHit/total*100);
+    const score = run + notesHit*10;
+    g.fill(14,14,18,170); g.rect(0,0,GAME_W,GAME_H);
     g.textAlign(CENTER, CENTER);
-    g.fill('#ffd76a'); g.textSize(14);
-    g.text('level complete!', GAME_W/2, GAME_H/2 - 16);
+    g.fill('#ffd76a'); g.textSize(13);
+    g.text(pct === 100 ? 'perfect performance!' : 'level complete!', GAME_W/2, GAME_H/2 - 30);
     g.fill('#e8e8f0'); g.textSize(9);
-    g.text(LEVELS[level].name + ' · ' + LEVELS[level].by, GAME_W/2, GAME_H/2 + 1);
-    g.fill('#9a9aab'); g.textSize(7);
-    g.text(run + 'm', GAME_W/2, GAME_H/2 + 13);
+    g.text(LEVELS[level].name + ' · ' + LEVELS[level].by, GAME_W/2, GAME_H/2 - 16);
+    // the song you actually played
+    g.fill(pct===100 ? '#ffd76a' : '#7fd4ff'); g.textSize(9);
+    g.text('♪ ' + notesHit + '/' + total + '  notes  (' + pct + '%)', GAME_W/2, GAME_H/2 - 1);
+    g.fill('#5a5a6a'); g.textSize(7);
+    g.text(run + 'm  +  ' + notesHit + ' notes ×10', GAME_W/2, GAME_H/2 + 11);
+    g.fill('#ffffff'); g.textSize(11);
+    g.text('score ' + score, GAME_W/2, GAME_H/2 + 23);
     g.fill('#ffffff'); g.textSize(8);
     const bk = (Math.floor(millis()/450) % 2) === 0;
     const more = level < LEVELS.length - 1;
     if (bk) g.text(more ? 'press for level ' + (level+2) + ' · ' + LEVELS[level+1].name
-                        : 'press to play again', GAME_W/2, GAME_H/2 + 27);
+                        : 'press to play again', GAME_W/2, GAME_H/2 + 37);
   }
 
   if (phase === 'title'){
