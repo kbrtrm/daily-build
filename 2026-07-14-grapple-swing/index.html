@@ -13,6 +13,8 @@
     transition:opacity .15s,color .15s;-webkit-user-select:none;user-select:none}
   #back:hover{opacity:1;color:#fff}
 </style>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka+One&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
 </head>
 <body>
@@ -53,6 +55,13 @@ const AIR_ACC = 120;              // air steering
 const PUMP     = 150;             // auto-pump thrust along the swing (px/s²)
 const PUMP_MAX = 205;             // target tangential speed — swing self-limits here
 const APPLE_RED = '#d8352f';      // you are the APPLE in GR-APPLE
+/* Chunky + bubbly title face. Must be a BARE family name — p5's textFont()
+   quotes whatever you hand it, so a font stack becomes one bogus family and
+   silently falls back. Canvas text also doesn't trigger a webfont download on
+   its own (only DOM text does), hence the explicit fonts.load() below. */
+const TITLE_FONT = 'Fredoka One';
+const UI_FONT    = 'sans-serif';
+if (document.fonts && document.fonts.load) document.fonts.load("26px '" + TITLE_FONT + "'");
 
 /* A level IS a song. Each measure = one hook (a BASS note played on the grab)
    whose swing-arc carries that bar's MELODY notes as orbs. Play it clean —
@@ -918,17 +927,25 @@ function render(){
   if (phase === 'title'){
     g.fill(14,14,18,190); g.rect(0,0,GAME_W,GAME_H);
     g.textAlign(CENTER, CENTER);
-    // GR-APPLE: each letter rides its own sine, and the APPLE goes apple-red
+    // GR-APPLE: each letter rides its own sine, and the APPLE goes apple-red.
+    // Fredoka One (chunky + bubbly); falls back to the default face until the
+    // webfont lands, and the loop just redraws it once it has.
     const word = 'GRAPPLE';
-    g.textSize(20);
+    g.textFont(TITLE_FONT);
+    g.textSize(26);
     const ws = [...word].map(c => g.textWidth(c));
     let lx = GAME_W/2 - ws.reduce((a,b)=>a+b, 0)/2;
     for (let i=0; i<word.length; i++){
       const bob = Math.sin(millis()/260 - i*0.55) * 4;
+      const cx = lx + ws[i]/2, cy = GAME_H/2 - 30 + bob;
+      g.fill(14,14,18);                                   // fat dark outline
+      for (const [ox,oy] of [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[1,-1],[-1,1],[1,1]])
+        g.text(word[i], cx+ox, cy+oy);
       g.fill(i < 2 ? '#ffffff' : APPLE_RED);
-      g.text(word[i], lx + ws[i]/2, GAME_H/2 - 28 + bob);
+      g.text(word[i], cx, cy);
       lx += ws[i];
     }
+    g.textFont(UI_FONT);        // restore explicitly — pop() doesn't reset the face
     g.fill('#e8e8f0'); g.textSize(12);
     g.text(LEVELS[level].name, GAME_W/2, GAME_H/2 + 2);
     g.fill('#7fd4ff'); g.textSize(8);
