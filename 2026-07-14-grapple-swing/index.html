@@ -62,6 +62,8 @@ const C5=523.25, D5=587.33, E5=659.25, F5=698.46, G5=783.99;    // melody
 const D3=146.83, B2=123.47, A2=110.00, G2=98.00, Fs2=92.50, D2=73.42;
 const E4=329.63, Fs4=369.99, G4=392.00, A4=440.00, B4=493.88,
       Cs5=554.37, Fs5=739.99, A5=880.00;
+// Für Elise lives in A minor
+const E2=82.41, Gs4=415.30, Ds5=622.25;
 const LEVELS = [
   /* One entry = one hook = one swing. `mel` can hold ANY number of notes —
      the arc sweep widens to fit them. `beats` is how long the swing lasts in
@@ -103,6 +105,24 @@ const LEVELS = [
     { bass:G2,  mel:[B4,G4,B4,D5],    beats:2 },   // G
     { bass:A2,  mel:[Cs5,E5,Cs5,A4],  beats:2 },   // A7 → resolve
   ] },
+
+  /* Für Elise: the bass is a plain Am/E alternation — here the MELODY is the
+     antagonist. That chromatic E–D#–E–D# trill is four tight notes on one
+     swing, and the tempo is quicker (beatDx 28) so the hooks come at you
+     faster than either earlier level. */
+  { name:'Für Elise', by:'Beethoven', beatDx:28, measures:[
+    { bass:A2, mel:[E5,Ds5,E5,Ds5]  },   // Am : the trill
+    { bass:A2, mel:[E5,B4,D5,C5]    },   // Am : E B D C
+    { bass:A2, mel:[A4,E4,A4,B4]    },   // Am : land on A, arpeggio up, B
+    { bass:E2, mel:[E4,Gs4,B4,C5]   },   // E  : E G# B → C
+    { bass:A2, mel:[E4,E5,Ds5,E5]   },   // Am : back into the trill
+    { bass:A2, mel:[Ds5,E5,B4,D5]   },   // Am
+    { bass:A2, mel:[C5,A4,E4,A4]    },   // Am : resolve, arpeggio
+    { bass:E2, mel:[B4,E4,Gs4,B4]   },   // E
+    { bass:A2, mel:[C5,E4,E5,Ds5]   },   // Am : and again
+    { bass:A2, mel:[E5,Ds5,E5,B4]   },   // Am
+    { bass:A2, mel:[D5,C5,A4], beats:4 },// Am : final resolve, held
+  ] },
 ];
 
 let phase;        // 'title' | 'play'
@@ -131,6 +151,9 @@ let won;          // level cleared
 let level;        // current level index
 let startLock;    // opening hook stays attached until you first take hold
 let notesHit;     // melody notes actually played — drives the level score
+let entering;     // typing initials for a new high score
+let initials;     // what they've typed so far
+let lastScore, lastPct;   // this run's result
 let stars;        // parallax dots
 
 /* deterministic-ish generator so the course is varied but not jittery */
@@ -189,6 +212,7 @@ function reset(){
   chaser = { x: -300, on:false }; deathMsg = 'splat!';
   grabbed = false; spitUsed = false; aim = -0.9; aimDir = 1;
   milestone = 0; mileT = 0; mileMsg = ''; won = false; startLock = false; notesHit = 0;
+  entering = false; initials = ''; lastScore = 0; lastPct = 0;
   level = level || 0;
   phase = 'title';
   best = best || 0;
@@ -197,6 +221,34 @@ function reset(){
   _seed = 1337;
   buildLevel(level);
   hangAtStart(false);            // pose at the first hook for the title screen
+}
+
+/* ---- high scores ----
+   Per-device via localStorage: your board survives reloads, but it is NOT
+   shared between players — that would need a backend this static page
+   doesn't have. Storage is isolated here so a remote store can drop in.
+   Wrapped in try/catch: localStorage throws on file:// and in private mode. */
+const HS_KEY = 'grapple.hiscores.v1';
+const HS_MAX = 5;
+function loadBoard(){
+  try { return JSON.parse(localStorage.getItem(HS_KEY)) || {}; }
+  catch(e){ return {}; }
+}
+function boardFor(lv){
+  const list = loadBoard()[lv] || [];
+  return list.slice().sort((a,b) => b.score - a.score).slice(0, HS_MAX);
+}
+function qualifies(lv, score){
+  const b = boardFor(lv);
+  return b.length < HS_MAX || score > b[b.length-1].score;
+}
+function addScore(lv, ini, score, pct){
+  const all = loadBoard();
+  const list = all[lv] || [];
+  list.push({ ini, score, pct });
+  list.sort((a,b) => b.score - a.score);
+  all[lv] = list.slice(0, HS_MAX);
+  try { localStorage.setItem(HS_KEY, JSON.stringify(all)); } catch(e){}
 }
 
 /* ---- little synth ----
@@ -302,10 +354,24 @@ function update(dt){
     return;
   }
   if (won){
-    // keep the confetti alive; press to move on
+    // keep the confetti alive
     for (const s of parts){ s.x+=s.vx*dt; s.y+=s.vy*dt; s.vy+=200*dt; s.life-=dt; }
     parts = parts.filter(s => s.life > 0);
     if (mileT > 0) mileT = Math.max(0, mileT - dt);
+
+    if (entering){
+      // arcade initials: type up to 3 letters, backspace to fix, enter to sign
+      for (const k of _pressed){
+        if (/^[a-z]$/.test(k) && initials.length < 3) initials += k.toUpperCase();
+        else if (k === 'backspace') initials = initials.slice(0, -1);
+        else if (k === 'enter' && initials.length){
+          addScore(level, initials, lastScore, lastPct);
+          entering = false;
+          beep(880, 0.08, 'triangle', 0.10); beep(1318.5, 0.14, 'sine', 0.06);
+        }
+      }
+      return;                                    // space must not skip the entry
+    }
     if (pressed('space') || clicked()){
       if (level < LEVELS.length - 1) level++;    // on to the next song
       reset();
@@ -399,8 +465,10 @@ function update(dt){
   if (hund > milestone){ milestone = hund; celebrate(hund * 100); }
   if (mileT > 0) mileT = Math.max(0, mileT - dt);
 
-  // reached the finish gate → level cleared
-  if (!won && p.x > levelEndX) winLevel();
+  // reached the finish gate → level cleared. Return immediately: the rest of
+  // this frame (skip bonuses, chaser) would otherwise fire popups over the
+  // results screen — crossing the line does sail you past un-grabbed hooks.
+  if (!won && p.x > levelEndX){ winLevel(); return; }
 
   // bonus for daring: fly past a hook without grabbing it
   for (const a of anchors){
@@ -489,6 +557,10 @@ function winLevel(){
   won = true; hook = null; chaser.on = false;
   mileT = 0; pop.t = 0;          // clear any in-flight popups so they don't
                                  // collide with the results screen
+  lastScore = run + notesHit*10;
+  lastPct   = Math.round(notesHit / Math.max(1, orbs.length) * 100);
+  entering  = qualifies(level, lastScore);   // made the board? sign it
+  initials  = '';
   const cols = ['#ffd76a','#7fd4ff','#ff8ad0','#ffffff'];
   for (let i=0;i<40;i++) parts.push(spark(p.x, p.y, cols[i%4]));
   // a little rising fanfare
@@ -692,26 +764,57 @@ function render(){
   }
 
   if (won){
-    const total = orbs.length, pct = Math.round(notesHit/total*100);
-    const score = run + notesHit*10;
-    g.fill(14,14,18,170); g.rect(0,0,GAME_W,GAME_H);
+    g.fill(14,14,18,190); g.rect(0,0,GAME_W,GAME_H);
     g.textAlign(CENTER, CENTER);
-    g.fill('#ffd76a'); g.textSize(13);
-    g.text(pct === 100 ? 'perfect performance!' : 'level complete!', GAME_W/2, GAME_H/2 - 30);
-    g.fill('#e8e8f0'); g.textSize(9);
-    g.text(LEVELS[level].name + ' · ' + LEVELS[level].by, GAME_W/2, GAME_H/2 - 16);
-    // the song you actually played
-    g.fill(pct===100 ? '#ffd76a' : '#7fd4ff'); g.textSize(9);
-    g.text('♪ ' + notesHit + '/' + total + '  notes  (' + pct + '%)', GAME_W/2, GAME_H/2 - 1);
-    g.fill('#5a5a6a'); g.textSize(7);
-    g.text(run + 'm  +  ' + notesHit + ' notes ×10', GAME_W/2, GAME_H/2 + 11);
-    g.fill('#ffffff'); g.textSize(11);
-    g.text('score ' + score, GAME_W/2, GAME_H/2 + 23);
-    g.fill('#ffffff'); g.textSize(8);
     const bk = (Math.floor(millis()/450) % 2) === 0;
-    const more = level < LEVELS.length - 1;
-    if (bk) g.text(more ? 'press for level ' + (level+2) + ' · ' + LEVELS[level+1].name
-                        : 'press to play again', GAME_W/2, GAME_H/2 + 37);
+
+    g.fill('#ffd76a'); g.textSize(12);
+    g.text(lastPct === 100 ? 'perfect performance!' : 'level complete!', GAME_W/2, 16);
+    g.fill('#e8e8f0'); g.textSize(8);
+    g.text(LEVELS[level].name + ' · ' + LEVELS[level].by, GAME_W/2, 29);
+    g.fill(lastPct === 100 ? '#ffd76a' : '#7fd4ff'); g.textSize(8);
+    g.text('♪ ' + notesHit + '/' + orbs.length + ' notes (' + lastPct + '%)  ·  score ' + lastScore,
+           GAME_W/2, 41);
+
+    if (entering){
+      g.fill('#ffd76a'); g.textSize(9);
+      g.text('NEW HIGH SCORE', GAME_W/2, 62);
+      // three slots, with a blinking cursor on the next one
+      for (let i=0; i<3; i++){
+        const bx = GAME_W/2 - 26 + i*26;
+        const has = i < initials.length;
+        g.fill(has ? '#ffffff' : (i === initials.length && bk ? '#7fd4ff' : '#33333f'));
+        g.textSize(16);
+        g.text(has ? initials[i] : '_', bx, 84);
+      }
+      g.fill('#6a6a7a'); g.textSize(7);
+      g.text('type your initials  ·  enter to sign', GAME_W/2, 106);
+    } else {
+      const bd = boardFor(level);
+      g.fill('#9a9aab'); g.textSize(7);
+      g.text('HIGH SCORES  ·  ' + LEVELS[level].name, GAME_W/2, 58);
+      if (!bd.length){
+        g.fill('#4b4b58'); g.text('no scores yet', GAME_W/2, 76);
+      }
+      for (let i=0; i<bd.length; i++){
+        const e = bd[i];
+        // highlight the run just played
+        const mine = e.ini === initials && e.score === lastScore;
+        g.fill(mine ? '#ffd76a' : '#8a8a98'); g.textSize(8);
+        g.textAlign(LEFT, CENTER);
+        g.text((i+1) + '.', GAME_W/2 - 52, 72 + i*11);
+        g.text(e.ini,       GAME_W/2 - 38, 72 + i*11);
+        g.textAlign(RIGHT, CENTER);
+        g.text(e.score,     GAME_W/2 + 38, 72 + i*11);
+        g.fill(mine ? '#a88a3a' : '#4b4b58'); g.textSize(6);
+        g.text(e.pct + '%', GAME_W/2 + 56, 72 + i*11);
+        g.textAlign(CENTER, CENTER);
+      }
+      g.fill('#ffffff'); g.textSize(8);
+      const more = level < LEVELS.length - 1;
+      if (bk) g.text(more ? 'press for level ' + (level+2) + ' · ' + LEVELS[level+1].name
+                          : 'press to play again', GAME_W/2, 138);
+    }
   }
 
   if (phase === 'title'){
