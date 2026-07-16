@@ -234,7 +234,7 @@ function reset(){
    fallback: used when the Worker isn't configured or can't be reached, so the
    game always works offline. Try/catch because localStorage throws on
    file:// and in private mode. */
-const SCORES_URL = '';   // ← paste the deployed Worker URL (…/scores) to go global
+const SCORES_URL = 'https://grapple-scores.kbrtrm.workers.dev/scores';   // worker/ — global board
 const HS_KEY = 'grapple.hiscores.v1';
 const HS_MAX = 5;
 
