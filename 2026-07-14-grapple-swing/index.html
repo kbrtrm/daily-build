@@ -229,17 +229,41 @@ function reset(){
 }
 
 /* ---- high scores ----
-   Per-device via localStorage: your board survives reloads, but it is NOT
-   shared between players — that would need a backend this static page
-   doesn't have. Storage is isolated here so a remote store can drop in.
-   Wrapped in try/catch: localStorage throws on file:// and in private mode. */
+   Global board via a tiny Cloudflare Worker (see worker/) — Pages is static
+   and can't take writes, so the leaderboard lives there. localStorage is the
+   fallback: used when the Worker isn't configured or can't be reached, so the
+   game always works offline. Try/catch because localStorage throws on
+   file:// and in private mode. */
+const SCORES_URL = '';   // ← paste the deployed Worker URL (…/scores) to go global
 const HS_KEY = 'grapple.hiscores.v1';
 const HS_MAX = 5;
+
+let remoteBoard = null;      // { 0:[…], 1:[…], 2:[…] } once fetched
+let remoteState = 'off';     // 'off' | 'loading' | 'live' | 'error'
+
+function fetchBoard(){
+  if (!SCORES_URL) { remoteState = 'off'; return; }
+  remoteState = 'loading';
+  fetch(SCORES_URL)
+    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    .then(d => { remoteBoard = d; remoteState = 'live'; })
+    .catch(() => { remoteState = 'error'; });      // fall back to local
+}
+function submitScore(lv, ini, score, pct){
+  if (!SCORES_URL) return;
+  fetch(SCORES_URL, { method:'POST', headers:{'Content-Type':'application/json'},
+                      body: JSON.stringify({ level:lv, ini, score, pct }) })
+    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    .then(top => { (remoteBoard = remoteBoard || {})[lv] = top; remoteState = 'live'; })
+    .catch(() => { remoteState = 'error'; });
+}
+
 function loadBoard(){
   try { return JSON.parse(localStorage.getItem(HS_KEY)) || {}; }
   catch(e){ return {}; }
 }
 function boardFor(lv){
+  if (remoteBoard && remoteBoard[lv]) return remoteBoard[lv].slice(0, HS_MAX);
   const list = loadBoard()[lv] || [];
   return list.slice().sort((a,b) => b.score - a.score).slice(0, HS_MAX);
 }
@@ -253,13 +277,15 @@ function hasScarf(){ try { return localStorage.getItem(SCARF_KEY) === '1'; } cat
 function unlockScarf(){ try { localStorage.setItem(SCARF_KEY, '1'); } catch(e){} }
 
 function addScore(lv, ini, score, pct){
-  const all = loadBoard();
+  const all = loadBoard();                     // always keep a local copy…
   const list = all[lv] || [];
   list.push({ ini, score, pct });
   list.sort((a,b) => b.score - a.score);
   all[lv] = list.slice(0, HS_MAX);
   try { localStorage.setItem(HS_KEY, JSON.stringify(all)); } catch(e){}
+  submitScore(lv, ini, score, pct);             // …and push it to the world
 }
+fetchBoard();                                   // pull the global board on load
 
 /* ---- little synth ----
    The engine's beep() is a 5ms-attack pluck that dies on an exponential —
@@ -574,6 +600,7 @@ function winLevel(){
   entering  = qualifies(level, lastScore);   // made the board? sign it
   initials  = '';
   gameDone  = (level === LEVELS.length - 1); // that was the last song
+  fetchBoard();                              // refresh the global board
   if (gameDone && !hasScarf()){              // first clear ever → the scarf
     unlockScarf(); scarfOn = true; scarfNew = true;
   }
@@ -824,7 +851,13 @@ function render(){
     } else {
       const bd = boardFor(level);
       g.fill('#9a9aab'); g.textSize(7);
-      g.text('HIGH SCORES  ·  ' + LEVELS[level].name, GAME_W/2, 58);
+      g.text('HIGH SCORES  ·  ' + LEVELS[level].name, GAME_W/2, 55);
+      // say plainly whose board this is
+      g.fill(remoteState === 'live' ? '#5a7a6a' : '#4b4b58'); g.textSize(6);
+      g.text(remoteState === 'live'    ? 'global'
+           : remoteState === 'loading' ? 'loading…'
+           : remoteState === 'error'   ? 'offline · this device'
+           :                             'this device', GAME_W/2, 64);
       if (!bd.length){
         g.fill('#4b4b58'); g.text('no scores yet', GAME_W/2, 76);
       }
